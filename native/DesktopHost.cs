@@ -45,6 +45,17 @@ internal static class DesktopHost
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr window, IntPtr region, bool redraw);
+
+    private static void Round(IntPtr window)
+    {
+        Rect rect; GetWindowRect(window, out rect);
+        int diameter = (int)Math.Round(48 * GetDpiForWindow(window) / 96.0);
+        IntPtr region = CreateRoundRectRgn(0, 0, rect.Right - rect.Left + 1, rect.Bottom - rect.Top + 1, diameter, diameter);
+        if (region != IntPtr.Zero && SetWindowRgn(window, region, true) == 0) DeleteObject(region);
+    }
 
     private static string ClassName(IntPtr window) { var value = new StringBuilder(256); GetClassName(window, value, value.Capacity); return value.ToString(); }
     private static object Describe(IntPtr window)
@@ -112,7 +123,8 @@ internal static class DesktopHost
             if (GetMonitorInfo(monitor, ref info)) { point.X = info.Monitor.Left; point.Y = info.Monitor.Top; width = info.Monitor.Right - info.Monitor.Left; height = info.Monitor.Bottom - info.Monitor.Top; }
         }
         ScreenToClient(parent, ref point);
-        if (!SetWindowPos(window, bottom ? new IntPtr(1) : IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
+        // The parent already defines the desktop layer; keep this app above older wallpaper children.
+        if (!SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
     }
 
     private static object Run(string[] args)
@@ -162,6 +174,7 @@ internal static class DesktopHost
                 AttachThreadInput(widgetThread, desktopThread, true);
             }
             Place(window, parent, args, 4, background);
+            if (!background) Round(window);
             if (GetParent(window) != parent) throw new InvalidOperationException("Desktop attachment did not succeed.");
             RedrawWindow(parent, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0080);
             return new { attached = true, layer = args[3], window = Describe(window), host = Describe(parent), iconView = Describe(hosts[2]) };
@@ -172,6 +185,7 @@ internal static class DesktopHost
             var parent = GetParent(window);
             if (parent == IntPtr.Zero) throw new InvalidOperationException("Window is not attached.");
             Place(window, parent, args, 3, false);
+            Round(window);
             return Describe(window);
         }
         if (args[0] == "focus")
@@ -222,6 +236,7 @@ internal static class DesktopHost
                 else { width = Math.Max((int)(260 * scale), Math.Min((int)(1600 * scale), width + dx)); height = Math.Max((int)(220 * scale), Math.Min((int)(1600 * scale), height + dy)); }
                 ScreenToClient(parent, ref point);
                 SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0004);
+                if (args[0] == "resize") Round(window);
                 Thread.Sleep(16);
             }
             return new { moved = true };

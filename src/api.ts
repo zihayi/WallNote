@@ -42,7 +42,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.2.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false }),
+  getInfo: async () => ({ version: '0.3.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -56,6 +56,8 @@ const previewAPI: WallNoteAPI = {
   getDesktopStatus: async () => ({ enabled: false, active: false, displays: 0, widgets: 0, error: null }),
   desktopControl: async () => { throw new Error('请启动 Windows 桌面版，将 WallNote 直接铺到电脑桌面。'); },
   onDesktopStatus: () => () => undefined,
+  getDesktopSurface: async () => null,
+  onDesktopSurface: () => () => undefined,
   focusDesktopWidget: () => undefined,
   manipulateDesktopWidget: () => undefined,
   finishDesktopManipulation: () => undefined,

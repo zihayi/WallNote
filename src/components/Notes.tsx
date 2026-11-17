@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Grip, Pin, PinOff, Settings, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, Pin, PinOff, StickyNote, Trash2 } from 'lucide-react';
 import { createNote, noteColors } from '../../shared/state';
-import type { Action, Note, NoteColor } from '../../shared/types';
+import type { Action, AppState, Note, NoteColor } from '../../shared/types';
 import { api, errorMessage } from '../api';
 import { Modal } from './Modal';
-import { beginDesktopManipulation } from './desktop-input';
+import { FrostedPanel } from './FrostedPanel';
 
 const colorLabels: Record<NoteColor, string> = { butter: '奶油黄', lavender: '浅薰衣草', mint: '薄荷绿', rose: '蔷薇粉', sky: '天空蓝' };
 
-export function ColorPicker({ value, onChange }: { value: NoteColor; onChange: (color: NoteColor) => void }) {
-  return <div className="color-picker" aria-label="便签颜色">{noteColors.map(color => <button key={color} className={`color-dot ${color}`} aria-label={colorLabels[color]} aria-pressed={value === color} onClick={() => onChange(color)}>{value === color && <Check size={13} />}</button>)}</div>;
+export function ColorPicker({ value, onChange, label = '便签颜色' }: { value: NoteColor; onChange: (color: NoteColor) => void; label?: string }) {
+  return <div className="color-picker" aria-label={label}>{noteColors.map(color => <button type="button" key={color} className={`color-dot ${color}`} aria-label={colorLabels[color]} aria-pressed={value === color} onClick={() => onChange(color)}>{value === color && <Check size={13} />}</button>)}</div>;
 }
 
 function relativeDate(date: string): string {
@@ -24,7 +24,7 @@ export function NoteCard({ note, onEdit, onPin, onDelete }: { note: Note; onEdit
     <button className="note-content-button" onClick={onEdit} aria-label={`编辑便签：${note.title || '无标题便签'}`}>
       <div className="note-card-top"><span className="note-fold" /><StickyNote size={17} />{note.pinned && <span className="pinned-label"><Pin size={11} /> 在桌面</span>}</div>
       <h3>{note.title || '无标题便签'}</h3>
-      <p>{note.content || '还没有写下什么，点这里开始记录…'}</p>
+      <p>{note.content || '点击编辑内容'}</p>
     </button>
     <footer><span>{relativeDate(note.updatedAt)}</span><div className="note-actions"><button className={`icon-button ${note.pinned ? 'active' : ''}`} onClick={onPin} aria-label={note.pinned ? `收起便签：${note.title}` : `贴到桌面：${note.title}`} title={note.pinned ? '从桌面收起' : '贴到桌面'}>{note.pinned ? <PinOff size={15} /> : <Pin size={15} />}</button><button className="icon-button danger-hover" onClick={onDelete} aria-label={`删除便签：${note.title}`}><Trash2 size={15} /></button></div></footer>
   </article>;
@@ -48,31 +48,41 @@ export function NoteEditor({ note, onSave, onClose }: { note: Note | null; onSav
     setSaving(false);
     if (success) onClose();
   };
-  return <Modal title={note ? '编辑便签' : '记下一个新想法'} onClose={close} className="note-editor-modal">
+  return <Modal title={note ? '编辑便签' : '新建便签'} onClose={close} className="note-editor-modal">
     <div className={`note-editor ${draft.color}`} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }}>
-      <input data-autofocus aria-label="便签标题" placeholder="给这个想法起个名字…" maxLength={120} value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} />
-      <textarea aria-label="便签内容" placeholder="灵感、计划，或只是此刻的心情…" maxLength={50000} value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} />
+      <input data-autofocus aria-label="便签标题" placeholder="便签标题" maxLength={120} value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} />
+      <textarea aria-label="便签内容" placeholder="输入便签内容" maxLength={50000} value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} />
       <div className="editor-bottom"><ColorPicker value={draft.color} onChange={color => setDraft({ ...draft, color })} /><span>{draft.content.length} 字</span></div>
     </div>
     {discard ? <div className="discard-prompt"><span>有尚未保存的内容，确定放弃吗？</span><button className="button small" onClick={() => setDiscard(false)}>继续编辑</button><button className="button danger small" onClick={onClose}>放弃更改</button></div> : <div className="modal-footer"><span className="shortcut-hint">Ctrl + Enter 快速保存</span><button className="button" onClick={close}>取消</button><button className="button primary" disabled={saving || (!draft.title.trim() && !draft.content.trim())} onClick={() => void save()}><Check size={16} />{saving ? '保存中…' : '保存便签'}</button></div>}
   </Modal>;
 }
 
-export function FloatingNote({ note }: { note: Note }) {
+export function FloatingNote({ note, state, desktop = true }: { note: Note; state: AppState; desktop?: boolean }) {
   const [draft, setDraft] = useState({ title: note.title, content: note.content });
   const draftRef = useRef(draft);
   const dirty = useRef<Partial<Pick<Note, 'title' | 'content'>>>({});
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef(0);
+  const [focusedField, setFocusedField] = useState<'title' | 'content' | null>(null);
   const [status, setStatus] = useState('已保存到本地');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (pending.current || Object.keys(dirty.current).length) return;
-    const next = { title: note.title, content: note.content };
+    // Ignore delayed save acknowledgements for the actively edited field. Replacing its value
+    // with an earlier acknowledgement moves the native textarea caret to the end.
+    const next = { title: focusedField === 'title' ? draftRef.current.title : note.title, content: focusedField === 'content' ? draftRef.current.content : note.content };
+    if (next.title === draftRef.current.title && next.content === draftRef.current.content) return;
     draftRef.current = next;
     setDraft(next);
-  }, [note.title, note.content]);
+  }, [note.title, note.content, focusedField]);
+
+  useEffect(() => {
+    const blur = () => setFocusedField(null);
+    window.addEventListener('blur', blur);
+    return () => window.removeEventListener('blur', blur);
+  }, []);
 
   async function flush(): Promise<boolean> {
     if (timer.current) clearTimeout(timer.current);
@@ -102,6 +112,7 @@ export function FloatingNote({ note }: { note: Note }) {
     return () => { if (timer.current) clearTimeout(timer.current); window.removeEventListener('beforeunload', unload); };
   }, []);
   function change(field: 'title' | 'content', value: string) {
+    setFocusedField(field);
     draftRef.current = { ...draftRef.current, [field]: value };
     setDraft(draftRef.current);
     dirty.current[field] = value;
@@ -114,12 +125,10 @@ export function FloatingNote({ note }: { note: Note }) {
     if (!(await flush())) return;
     try { await api.dispatch({ type: 'note:update', id: note.id, changes: { pinned: false } }); } catch (cause) { setError(errorMessage(cause)); }
   }
-  return <div className={`floating-note ${note.color}`} onPointerDownCapture={() => api.focusDesktopWidget()}>
-    <header className="floating-drag" onPointerDown={event => beginDesktopManipulation(event, 'move')}><span><Grip size={16} /> WALLNOTE</span><div><button className="icon-button" aria-label="打开管理面板" onClick={() => void api.desktopControl('showManager')}><Settings size={15} /></button><button className="icon-button" aria-label="收起桌面便签" title="收起便签（内容保留）" onClick={() => void unpin()}><X size={17} /></button></div></header>
-    <input aria-label="便签标题" placeholder="无标题便签" value={draft.title} maxLength={120} onChange={event => change('title', event.target.value)} onBlur={() => void flush()} />
-    <textarea aria-label="便签内容" placeholder="写点什么…" value={draft.content} maxLength={50000} onChange={event => change('content', event.target.value)} onBlur={() => void flush()} />
+  return <FrostedPanel state={state} title="便签" icon={<StickyNote size={17} />} desktop={desktop} className={`floating-note ${note.color}`} onClose={() => void unpin()}>
+    <input aria-label="便签标题" placeholder="无标题便签" value={draft.title} maxLength={120} onFocus={() => setFocusedField('title')} onPointerDown={() => setFocusedField('title')} onChange={event => change('title', event.target.value)} onBlur={() => { setFocusedField(null); void flush(); }} />
+    <textarea aria-label="便签内容" placeholder="输入便签内容" value={draft.content} maxLength={50000} onFocus={() => setFocusedField('content')} onPointerDown={() => setFocusedField('content')} onChange={event => change('content', event.target.value)} onBlur={() => { setFocusedField(null); void flush(); }} />
     {error && <div className="floating-error" role="alert">{error}</div>}
     <footer><ColorPicker value={note.color} onChange={color => { void api.dispatch({ type: 'note:update', id: note.id, changes: { color } }).catch(cause => setError(errorMessage(cause))); }} /><button className="save-status" onClick={() => void flush()}>{status}</button></footer>
-    <button className="desktop-resize-handle" aria-label="拖动调整便签大小" onPointerDown={event => beginDesktopManipulation(event, 'resize')} />
-  </div>;
+  </FrostedPanel>;
 }

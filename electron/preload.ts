@@ -16,6 +16,12 @@ const api: WallNoteAPI = {
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   restoreBackup: () => ipcRenderer.invoke('backup:restore'),
   getDesktopStatus: () => ipcRenderer.invoke('desktop:status'),
+  getDesktopSurface: () => ipcRenderer.invoke('desktop:surface'),
+  onDesktopSurface: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, surface: Parameters<typeof callback>[0]) => callback(surface);
+    ipcRenderer.on('desktop:surface', listener);
+    return () => ipcRenderer.removeListener('desktop:surface', listener);
+  },
   focusDesktopWidget: () => ipcRenderer.send('desktop:focus'),
   manipulateDesktopWidget: mode => ipcRenderer.send('desktop:manipulate', mode),
   finishDesktopManipulation: () => ipcRenderer.send('desktop:manipulate-stop'),

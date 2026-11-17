@@ -14,6 +14,9 @@ internal static class DesktopInput
     [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [StructLayout(LayoutKind.Sequential)] private struct GuiInfo { public int Size; public uint Flags; public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret; public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder value, int max);
     private static string Describe(IntPtr window) { var name = new StringBuilder(256); GetClassName(window, name, 256); return window.ToInt64() + ":" + name.ToString(); }
     [STAThread]
@@ -22,17 +25,29 @@ internal static class DesktopInput
         SetThreadDpiAwarenessContext(new IntPtr(-4));
         Point original; GetCursorPos(out original);
         int x = int.Parse(args[1]), y = int.Parse(args[2]);
+        uint owner = uint.Parse(args[args.Length - 1]);
+        uint hitOwner; GetWindowThreadProcessId(WindowFromPoint(new Point { X = x, Y = y }), out hitOwner);
+        if (hitOwner != owner) throw new InvalidOperationException("Test widget is covered; expected PID " + owner + ", hit " + hitOwner + ". No input was sent.");
+        bool pressed = false;
         try {
             SetCursorPos(x, y); Thread.Sleep(120);
+            GetWindowThreadProcessId(WindowFromPoint(new Point { X = x, Y = y }), out hitOwner);
+            if (hitOwner != owner) throw new InvalidOperationException("Test widget lost visibility; input cancelled.");
             Console.WriteLine("hit=" + Describe(WindowFromPoint(new Point { X = x, Y = y })));
-            mouse_event(2, 0, 0, 0, UIntPtr.Zero); Thread.Sleep(120);
+            mouse_event(2, 0, 0, 0, UIntPtr.Zero); pressed = true; Thread.Sleep(120);
             if (args[0] == "drag") {
                 int dx = int.Parse(args[3]), dy = int.Parse(args[4]);
                 for (int i = 1; i <= 15; i++) { SetCursorPos(x + dx * i / 15, y + dy * i / 15); Thread.Sleep(30); }
             }
-            mouse_event(4, 0, 0, 0, UIntPtr.Zero); Thread.Sleep(150);
-            if (args[0] == "type") SendKeys.SendWait(args[3]);
+            mouse_event(4, 0, 0, 0, UIntPtr.Zero); pressed = false; Thread.Sleep(350);
+            if (args[0] == "type") {
+                var info = new GuiInfo { Size = Marshal.SizeOf(typeof(GuiInfo)) };
+                GetGUIThreadInfo(0, ref info);
+                uint focusOwner; GetWindowThreadProcessId(info.Focus, out focusOwner);
+                if (focusOwner != owner) throw new InvalidOperationException("Test widget lost keyboard focus; typing cancelled.");
+                SendKeys.SendWait(args[3]);
+            }
             Console.WriteLine("foreground=" + Describe(GetForegroundWindow()));
-        } finally { mouse_event(4, 0, 0, 0, UIntPtr.Zero); SetCursorPos(original.X, original.Y); }
+        } finally { if (pressed) mouse_event(4, 0, 0, 0, UIntPtr.Zero); Thread.Sleep(200); SetCursorPos(original.X, original.Y); }
     }
 }

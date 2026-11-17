@@ -95,14 +95,15 @@ function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开 WallNote 管理面板', click: showManager },
     { label: '新建桌面便签', click: () => { void serial(async () => {
-      const note = { ...createNote(), pinned: true, title: '新的灵感' };
-      await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true } }, { type: 'note:add', note }));
+      const note = { ...createNote(), pinned: true, title: '新建便签' };
+      await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true, showDesktopNotes: true } }, { type: 'note:add', note }));
       await desktop.sync(); broadcast();
     }).catch(reportBackgroundError); } },
     { label: '显示桌面待办', type: 'checkbox', checked: store.state.settings.showDesktopTasks !== false, click: item => { void serial(async () => {
       await store.save(reduceState(store.state, { type: 'settings:update', changes: { showDesktopTasks: item.checked } }));
       await desktop.sync(); broadcast();
     }).catch(reportBackgroundError); } },
+    ...([['显示日历', 'showDesktopCalendar'], ['显示时间安排', 'showDesktopSchedule'], ['显示桌面便签', 'showDesktopNotes']] as const).map(([label, key]) => ({ label, type: 'checkbox' as const, checked: store.state.settings[key] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [key]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } })),
     { type: 'separator' },
     { label: status.enabled ? '暂停桌面壁纸' : '启用桌面壁纸', click: () => { void controlDesktop(status.enabled ? 'disable' : 'enable').catch(reportBackgroundError); } },
     { label: '退出 WallNote', click: () => app.quit() },
@@ -115,7 +116,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { mainWindow?.hide(); await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, tasksPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -138,13 +139,14 @@ function validateAction(value: unknown): asserts value is Action {
   const allowed: Record<string, string[]> = {
     'note:add': ['type', 'note'], 'note:update': ['type', 'id', 'changes'], 'note:delete': ['type', 'id'],
     'task:add': ['type', 'task'], 'task:toggle': ['type', 'id'], 'task:priority': ['type', 'id'], 'task:update': ['type', 'id', 'text'], 'task:delete': ['type', 'id'], 'task:clearCompleted': ['type'],
+    'event:add': ['type', 'event'], 'event:update': ['type', 'id', 'changes'], 'event:delete': ['type', 'id'], 'calendar:select': ['type', 'date'],
     'wallpaper:favorite': ['type', 'id'], 'wallpaper:select': ['type', 'id'], 'wallpaper:delete': ['type', 'id'], 'settings:update': ['type', 'changes'],
   };
   const keys = allowed[value.type];
   if (!keys || Object.keys(action).some(k => !keys.includes(k)) || keys.some(k => !(k in action))) throw new Error('无效的操作参数');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
-  if (value.type === 'note:update' || value.type === 'settings:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'tasksPosition'];
+  if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -161,8 +163,14 @@ function installIPC(): void {
     if (widget?.kind === 'wallpaper') throw new Error('壁纸层为只读显示。');
     if (widget?.kind === 'note' && (input.type !== 'note:update' || input.id !== widget.key.slice(5))) throw new Error('便签窗口只能修改当前便签');
     if (widget?.kind === 'tasks' && !input.type.startsWith('task:') && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopTasks'))) throw new Error('待办组件只能修改待办事项。');
+    if (widget?.kind === 'calendar' || widget?.kind === 'schedule') {
+      const flag = widget.kind === 'calendar' ? 'showDesktopCalendar' : 'showDesktopSchedule';
+      if (!input.type.startsWith('event:') && input.type !== 'calendar:select' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === flag))) throw new Error('日历组件只能修改日程。');
+    }
+    if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
     return serial(async () => {
-      const next = reduceState(store.state, input);
+      let next = reduceState(store.state, input);
+      if ((input.type === 'note:add' && input.note.pinned) || (input.type === 'note:update' && input.changes.pinned === true)) next = { ...next, settings: { ...next.settings, showDesktopNotes: true } };
       if (!isValidState(next)) throw new Error('内容超出限制或数据无效，未保存更改。');
       if (input.type === 'settings:update' && input.changes.launchAtLogin !== undefined) {
         if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) throw new Error('开发版与便携版不支持开机启动，请使用固定位置的安装版。');
@@ -170,7 +178,7 @@ function installIPC(): void {
       }
       await store.save(next);
       if (input.type === 'wallpaper:delete') {
-        // The current Windows wallpaper is a separate copy; removing a library entry is safe.
+        // Imported files are app-owned copies; the original image is never removed.
         await fs.unlink(path.join(imageDir, `${input.id}.jpg`)).catch(() => undefined);
       }
       await desktop.sync(); broadcast();
@@ -222,6 +230,7 @@ function installIPC(): void {
   });
   ipcMain.handle('app:info', event => { trusted(event); return { version: app.getVersion(), platform: process.platform, dataPath: store.directory, desktop: true }; });
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
+  ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
   ipcMain.on('desktop:focus', event => {
     const entry = desktop.identify(event.sender);
     if (entry && entry.kind !== 'wallpaper' && event.senderFrame === event.sender.mainFrame) void desktop.native('focus', entry.handle, String(process.pid)).catch(() => undefined);
@@ -244,7 +253,7 @@ function installIPC(): void {
   ipcMain.handle('app:dataFolder', async event => { trusted(event, true); const error = await shell.openPath(store.directory); if (error) throw new Error(error); });
   ipcMain.handle('backup:export', async event => {
     trusted(event, true);
-    const result = await dialog.showSaveDialog(mainWindow!, { title: '导出便签与待办备份', defaultPath: `WallNote-backup-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON 备份', extensions: ['json'] }] });
+    const result = await dialog.showSaveDialog(mainWindow!, { title: '导出数据备份', defaultPath: `WallNote-backup-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON 备份', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;
     await serial(async () => {
       // Images are deliberately excluded; backup is a portable notes/tasks/settings snapshot.
@@ -261,11 +270,11 @@ function installIPC(): void {
     if ((await fs.stat(file)).size > 30 * 1024 * 1024) throw new Error('备份文件过大。');
     const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
     if (!isValidState(parsed)) throw new Error('这不是有效的 WallNote 备份文件。');
-    const confirmation = await dialog.showMessageBox(mainWindow!, { type: 'question', buttons: ['取消', '恢复备份'], defaultId: 0, cancelId: 0, title: '恢复备份', message: '将替换当前便签和待办，继续吗？', detail: '恢复前会自动备份现有数据。你的壁纸库和系统设置会保留。' });
+    const confirmation = await dialog.showMessageBox(mainWindow!, { type: 'question', buttons: ['取消', '恢复备份'], defaultId: 0, cancelId: 0, title: '恢复备份', message: '将恢复便签、待办和备份中包含的日程，继续吗？', detail: '恢复前会自动备份现有数据。旧版备份不包含日程时，当前日程会保留。' });
     if (confirmation.response !== 1) return null;
     return serial(async () => {
       await fs.copyFile(store.file, path.join(store.directory, `before-restore-${Date.now()}.json`));
-      await store.save({ ...store.state, notes: parsed.notes.map(n => ({ ...n, pinned: false })), tasks: parsed.tasks });
+      await store.save({ ...store.state, notes: parsed.notes.map(n => ({ ...n, pinned: false })), tasks: parsed.tasks, events: parsed.events ?? store.state.events ?? [], calendarDate: parsed.calendarDate ?? store.state.calendarDate });
       await desktop.sync(); broadcast(); return store.state;
     });
   });

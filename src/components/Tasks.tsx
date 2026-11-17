@@ -16,7 +16,7 @@ export function TaskInput({ onAction, compact = false }: { onAction: RunAction; 
     setBusy(false);
   };
   return <form className={`task-input ${compact ? 'compact' : ''}`} onSubmit={event => { event.preventDefault(); void submit(); }}>
-    <Plus size={18} /><input aria-label="新待办事项" placeholder={compact ? '添加一件小事…' : '接下来，想完成什么？'} maxLength={500} value={text} onChange={event => setText(event.target.value)} />
+    <Plus size={18} /><input aria-label="新待办事项" placeholder="添加待办事项" maxLength={500} value={text} onChange={event => setText(event.target.value)} />
     {!compact && <button type="button" className={`icon-button priority-button ${priority ? 'is-priority' : ''}`} aria-label="标记新任务为重要" aria-pressed={priority} onClick={() => setPriority(!priority)}><Flag size={17} /></button>}
     <button className={compact ? 'task-add-mini' : 'button primary'} disabled={!text.trim() || busy} aria-label="添加待办">{compact ? <span>添加</span> : '添加任务'}</button>
   </form>;

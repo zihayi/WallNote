@@ -1,8 +1,8 @@
 {
   "name": "wallnote",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "壁纸、桌面便签与待办，让桌面成为自己的小天地。",
+  "description": "Windows 桌面壁纸、日历、时间安排、便签与待办清单。",
   "author": "WallNote",
   "license": "UNLICENSED",
   "type": "module",
