@@ -3,11 +3,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { execFile, type ChildProcess } from 'node:child_process';
 import { allWallpapers, builtInWallpapers, createNote, isValidState, reduceState } from '../shared/state';
 import type { Action, AppState, DesktopCommand, Wallpaper } from '../shared/types';
 import { StateStore } from './store';
 import { DesktopController } from './desktop';
+import { upgradeDesktopLayout } from '../shared/layout';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -116,7 +116,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { mainWindow?.hide(); await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -137,9 +137,10 @@ function validateAction(value: unknown): asserts value is Action {
   if (!value || typeof value !== 'object' || !('type' in value) || typeof value.type !== 'string') throw new Error('无效的操作');
   const action = value as Record<string, unknown>;
   const allowed: Record<string, string[]> = {
-    'note:add': ['type', 'note'], 'note:update': ['type', 'id', 'changes'], 'note:delete': ['type', 'id'],
+    'note:add': ['type', 'note'], 'note:update': ['type', 'id', 'changes'], 'note:delete': ['type', 'id'], 'note:selectDesktop': ['type', 'id'],
     'task:add': ['type', 'task'], 'task:toggle': ['type', 'id'], 'task:priority': ['type', 'id'], 'task:update': ['type', 'id', 'text'], 'task:delete': ['type', 'id'], 'task:clearCompleted': ['type'],
     'event:add': ['type', 'event'], 'event:update': ['type', 'id', 'changes'], 'event:delete': ['type', 'id'], 'calendar:select': ['type', 'date'],
+    'widget:topmost': ['type', 'key', 'enabled'],
     'wallpaper:favorite': ['type', 'id'], 'wallpaper:select': ['type', 'id'], 'wallpaper:delete': ['type', 'id'], 'settings:update': ['type', 'changes'],
   };
   const keys = allowed[value.type];
@@ -161,13 +162,17 @@ function installIPC(): void {
     if (quitting) throw new Error('正在退出，请稍后重新打开。');
     const widget = desktop.identify(event.sender);
     if (widget?.kind === 'wallpaper') throw new Error('壁纸层为只读显示。');
-    if (widget?.kind === 'note' && (input.type !== 'note:update' || input.id !== widget.key.slice(5))) throw new Error('便签窗口只能修改当前便签');
+    if (input.type === 'widget:topmost') {
+      if (widget && input.key !== (widget.kind === 'note' || widget.kind === 'notes-empty' ? 'notes' : widget.key)) throw new Error('只能切换当前组件的层级。');
+    } else {
+    if (widget?.kind === 'note' && input.type !== 'note:selectDesktop' && (input.type !== 'note:update' || input.id !== widget.key.slice(5))) throw new Error('便签窗口只能修改当前便签');
     if (widget?.kind === 'tasks' && !input.type.startsWith('task:') && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopTasks'))) throw new Error('待办组件只能修改待办事项。');
     if (widget?.kind === 'calendar' || widget?.kind === 'schedule') {
       const flag = widget.kind === 'calendar' ? 'showDesktopCalendar' : 'showDesktopSchedule';
       if (!input.type.startsWith('event:') && input.type !== 'calendar:select' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === flag))) throw new Error('日历组件只能修改日程。');
     }
     if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
+    }
     return serial(async () => {
       let next = reduceState(store.state, input);
       if ((input.type === 'note:add' && input.note.pinned) || (input.type === 'note:update' && input.changes.pinned === true)) next = { ...next, settings: { ...next.settings, showDesktopNotes: true } };
@@ -233,17 +238,14 @@ function installIPC(): void {
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
   ipcMain.on('desktop:focus', event => {
     const entry = desktop.identify(event.sender);
-    if (entry && entry.kind !== 'wallpaper' && event.senderFrame === event.sender.mainFrame) void desktop.native('focus', entry.handle, String(process.pid)).catch(() => undefined);
+    if (entry && entry.kind !== 'wallpaper' && event.senderFrame === event.sender.mainFrame) void desktop.focusWidget(event.sender).catch(() => undefined);
   });
-  const manipulating = new Map<number, ChildProcess>();
   ipcMain.on('desktop:manipulate', (event, mode: string) => {
     const entry = desktop.identify(event.sender);
-    if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || !['move', 'resize'].includes(mode) || manipulating.has(event.sender.id)) return;
-    const id = event.sender.id;
-    const child = execFile(desktop.executable, [mode, entry.handle, String(process.pid)], { windowsHide: true, timeout: 12000 }, () => { if (manipulating.get(id) === child) manipulating.delete(id); });
-    manipulating.set(id, child);
+    if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || (mode !== 'move' && mode !== 'resize')) return;
+    desktop.manipulate(event.sender, mode);
   });
-  ipcMain.on('desktop:manipulate-stop', event => { manipulating.get(event.sender.id)?.kill(); manipulating.delete(event.sender.id); });
+  ipcMain.on('desktop:manipulate-stop', event => { if (event.senderFrame === event.sender.mainFrame) desktop.finishManipulation(event.sender); });
   ipcMain.handle('desktop:control', (event, command: DesktopCommand) => {
     trusted(event);
     if (!['enable', 'disable', 'showManager', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');
@@ -292,6 +294,11 @@ if (hasLock) {
   app.whenReady().then(async () => {
     await fs.mkdir(imageDir, { recursive: true });
     const recovery = await store.load();
+    const updatedLayout = upgradeDesktopLayout(store.state);
+    if (updatedLayout !== store.state) {
+      await fs.copyFile(store.file, path.join(store.directory, `before-layout-v4-${Date.now()}.json`));
+      await store.save(updatedLayout);
+    }
     if (store.state.settings.desktopEnabled !== false && !store.state.appliedWallpaperId) await store.save({ ...store.state, appliedWallpaperId: store.state.selectedWallpaperId });
     protocol.handle('wallnote', request => {
       const url = new URL(request.url);

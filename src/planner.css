@@ -6,11 +6,11 @@ html[data-view='workspace'] body { overflow: hidden; }
   --note-ink: #617e70;
   position: relative; isolation: isolate; display: flex; flex-direction: column;
   width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 0 20px 16px;
-  background: #ffffff08; color: #314b40; border: 1px solid #ffffffa3; border-radius: 24px;
+  background: #ffffff08; color: #314b40; border: 1px solid #ffffff82; border-radius: 20px;
   backdrop-filter: blur(24px) saturate(1.14); -webkit-backdrop-filter: blur(24px) saturate(1.14);
   box-shadow: 0 10px 36px #263f321c, inset 0 1px 0 #ffffffb0; overflow: hidden;
 }
-.frost-panel.native-panel { width: 100vw; height: 100vh; margin: 0; box-shadow: inset 0 1px 0 #ffffffb0; background: transparent; }
+.frost-panel.native-panel { width: 100vw; height: 100vh; margin: 0; box-shadow: inset 0 1px 0 #ffffff80; background: transparent; clip-path: inset(0 round 20px); }
 .frost-scene { position: absolute; z-index: -2; pointer-events: none; background-size: cover; background-position: center; filter: blur(24px) saturate(1.12); }
 .frost-tint { position: absolute; inset: 0; z-index: -1; background: var(--frost-fill); pointer-events: none; }
 .solid-panel .frost-tint { background: #f4f7f3; }
@@ -27,6 +27,12 @@ html[data-view='workspace'] body { overflow: hidden; }
 .frost-header-actions { display: flex; align-items: center; gap: 5px; }
 .frost-header .icon-button { color: #637e6a; width: 26px; height: 26px; margin: 0; opacity: .8; }
 .frost-header .icon-button:hover { background: #ffffff65; opacity: 1; }
+.frost-header .widget-pin.active { color: #326a51; background: #e4f1e9b0; opacity: 1; }
+.native-panel .floating-drag { cursor: default; }
+.native-panel.is-topmost .floating-drag { cursor: grab; }
+.note-switcher { display: flex; align-items: center; gap: 1px; }
+.note-switcher > span { font-size: 9px; color: #78917e; min-width: 22px; text-align: center; }
+.frost-header .note-switcher .icon-button { width: 18px; height: 24px; }
 .frost-header .frost-title { gap: 8px; }
 .widget-count { color: #6b8373; font-size: 10px; white-space: nowrap; }
 .widget-footer { font-size: 10px; color: #6d8273; padding-top: 12px; }
@@ -42,6 +48,7 @@ html[data-view='workspace'] body { overflow: hidden; }
 .planner-empty > span { font-size: 10px; color: #7c9183; line-height: 1.8; max-width: 220px; }
 .planner-empty .button { margin-top: 6px; }
 .planner-empty .text-link { font-size: 11px; }
+.empty-notes-panel .planner-empty { min-height: 0; padding: 12px 6px; gap: 9px; overflow-y: auto; }
 
 .calendar-clock { display: flex; flex-direction: column; align-items: center; padding: 18px 0 20px; gap: 7px; flex-shrink: 0; }
 .calendar-clock time { color: #315749; font-family: 'Segoe UI Light', 'Segoe UI', sans-serif; font-size: 46px; font-weight: 300; line-height: 1.1; letter-spacing: -1.5px; }
@@ -77,7 +84,7 @@ html[data-view='workspace'] body { overflow: hidden; }
 .schedule-day span { font-size: 10px; color: #7a8e78; display: block; margin-top: 6px; }
 .schedule-day > div:last-child { display: flex; gap: 1px; }
 .schedule-day .icon-button { color: #648268; }
-.hourly-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 3px; scrollbar-width: thin; }
+.hourly-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 5px; overscroll-behavior: contain; }
 .hour-row { display: grid; grid-template-columns: 43px minmax(0, 1fr); gap: 9px; min-height: 58px; }
 .hour-label { padding: 11px 0 0; font-family: 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; font-size: 11px; color: #778b75; align-self: start; position: relative; text-align: left; }
 .hour-label:hover { color: #315d42; }
@@ -148,9 +155,9 @@ html[data-view='workspace'] body { overflow: hidden; }
 .compact-heading h1 { font-size: 26px; }
 .workspace-date { display: flex; align-items: center; gap: 8px; color: #8e9f84; font-size: 11px; white-space: nowrap; }
 .planner-workspace { position: relative; border-radius: 23px; overflow: hidden; padding: 21px; background-size: cover; background-position: center; height: 720px; border: 1px solid #d6e1d0; box-shadow: 0 4px 20px #45603d0c; }
-.planner-workspace-grid { width: 100%; height: 100%; display: grid; grid-template-columns: minmax(230px,.95fr) minmax(300px,1.32fr) minmax(230px,.94fr); gap: 16px; align-items: stretch; }
-.workspace-right { display: grid; grid-template-rows: minmax(0,.47fr) minmax(0,.53fr); gap: 17px; min-height: 0; min-width: 0; }
-.planner-workspace .frost-panel { padding-left: 15px; padding-right: 15px; border-radius: 19px; }
+.planner-workspace-grid { width: 100%; height: 100%; display: grid; grid-template-columns: minmax(230px,1fr) minmax(300px,1.5fr) minmax(230px,1fr); gap: 20px; align-items: stretch; }
+.workspace-right { display: grid; grid-template-rows: minmax(0,1fr) minmax(0,1fr); gap: 20px; min-height: 0; min-width: 0; }
+.planner-workspace .frost-panel { padding-left: 15px; padding-right: 15px; border-radius: 20px; }
 .planner-workspace .calendar-clock { padding: 15px 0 17px; }
 .planner-workspace .calendar-clock time { font-size: 40px; }
 .planner-workspace .calendar-grid > button { height: 36px; }
@@ -160,13 +167,48 @@ html[data-view='workspace'] body { overflow: hidden; }
 .calendar-management-grid > .frost-panel { box-shadow: 0 8px 24px #345d3b12; }
 .about-monitor { color: #9bb08a; display: block; margin: 35px auto 20px; }
 .standalone-workspace { position: fixed; inset: 0; width: 100vw; height: 100vh; border: none; border-radius: 0; padding: 32px min(2.5vw, 40px); display: flex; align-items: center; }
-.standalone-workspace .planner-workspace-grid { height: min(800px, calc(100vh - 48px)); grid-template-columns: minmax(250px,350px) minmax(280px,520px) minmax(250px,330px); justify-content: space-between; gap: 20px; }
-.standalone-workspace .frost-panel { padding-left: 20px; padding-right: 20px; border-radius: 24px; }
+.standalone-workspace .planner-workspace-grid { height: min(800px, calc(100vh - 64px)); max-width: 1280px; margin: auto; grid-template-columns: minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr); gap: 24px; }
+.standalone-workspace .workspace-right { gap: 24px; }
+.standalone-workspace .frost-panel { padding-left: 20px; padding-right: 20px; border-radius: 20px; }
 .standalone-workspace .calendar-clock { padding: 18px 0 20px; }
 .standalone-workspace .calendar-clock time { font-size: 46px; }
 .standalone-workspace .calendar-grid > button { height: 41px; }
 .standalone-workspace .frost-header { height: 51px; min-height: 51px; }
 .workspace-watermark { position: absolute; left: 40px; bottom: 18px; color: #ffffff77; font-size: 11px; letter-spacing: 1px; }
+
+/* Use Chromium's slim custom scrollbar instead of the Windows arrow-button scrollbar. */
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea) { scrollbar-width: auto; scrollbar-color: auto; overscroll-behavior: contain; }
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea)::-webkit-scrollbar { width: 5px; height: 5px; }
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea)::-webkit-scrollbar-track { background: transparent; margin: 7px 0; }
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea)::-webkit-scrollbar-thumb { background: #55776212; border-radius: 10px; }
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea):hover::-webkit-scrollbar-thumb,
+.frost-panel :is(.hourly-list, .calendar-agenda, .desktop-tasks-list, textarea):focus-within::-webkit-scrollbar-thumb { background: #55776250; }
+.frost-panel ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.frost-panel ::-webkit-scrollbar-corner { background: transparent; }
+.frost-panel { container-name: widget; container-type: size; }
+.frost-panel input, .frost-panel textarea, .frost-panel select { max-width: 100%; }
+.frost-panel .frost-title { flex-shrink: 1; }
+.frost-panel .frost-header-actions { flex-shrink: 0; }
+@container widget (max-height: 660px) {
+  .calendar-panel .frost-header { height: 44px; min-height: 44px; }
+  .calendar-clock { flex-direction: row; justify-content: space-between; align-items: baseline; padding: 11px 0 13px; gap: 10px; }
+  .calendar-clock time { font-size: 30px; letter-spacing: -1px; }
+  .calendar-clock > span { font-size: 10px; letter-spacing: 0; }
+  .calendar-toolbar { padding: 3px 0 8px; }
+  .calendar-weekdays > span { padding: 5px 0; }
+  .calendar-grid { gap: 3px; }
+  .calendar-grid > button { height: 30px; gap: 3px; border-radius: 8px; }
+  .selected-day-heading { padding: 12px 0 10px; margin-top: 10px; }
+  .calendar-agenda .schedule-event { padding: 8px 10px; gap: 3px; }
+  .calendar-agenda .planner-empty { padding: 10px 4px; min-height: 60px; }
+}
+@container widget (max-width: 300px) {
+  .note-switcher > span { display: none; }
+  .frost-header-actions { gap: 2px; }
+  .frost-header .icon-button { width: 23px; }
+  .frost-title h2 { font-size: 12px; }
+  .widget-count { font-size: 9px; }
+}
 
 @media (max-height: 650px) {
   .native-panel .calendar-clock { padding: 9px 0 12px; }

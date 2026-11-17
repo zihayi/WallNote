@@ -17,14 +17,14 @@ try {
   await expect.poll(() => app.windows().some(isManager), { timeout: 20000 }).toBe(true);
   const manager = app.windows().find(isManager);
   await expect.poll(() => manager.evaluate(() => window.wallnote?.getDesktopStatus()), { timeout: 30000 }).toMatchObject({ active: true, widgets: 4, error: null });
-  expect(await manager.evaluate(() => window.wallnote.getInfo())).toMatchObject({ version: '0.3.0', desktop: true });
+  expect(await manager.evaluate(() => window.wallnote.getInfo())).toMatchObject({ version: '0.4.0', desktop: true });
   const calendar = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'calendar');
   await expect(calendar.locator('.calendar-grid > button')).toHaveCount(42);
-  await expect(calendar.locator('.frost-panel')).toHaveCSS('border-radius', '24px');
+  await expect(calendar.locator('.frost-panel')).toHaveCSS('border-radius', '20px');
   await manager.evaluate(() => window.wallnote.dispatch({ type: 'event:add', event: { id: 'package-check', title: '打包验证', date: '2028-02-29', start: '09:00', end: '10:00', description: '', color: 'mint' } }));
   await manager.evaluate(() => window.wallnote.dispatch({ type: 'calendar:select', date: '2028-02-29' }));
   await expect(calendar.getByRole('button', { name: '编辑日程：打包验证', exact: true })).toBeVisible();
   const schedule = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'schedule');
   await expect(schedule.getByRole('button', { name: '编辑日程：打包验证', exact: true })).toBeVisible();
-  console.log('Packaged v0.3.0 passed: native bridge, four widgets, calendar/schedule synchronization and glass styling.');
+  console.log('Packaged v0.4.0 passed: desktop input bridge, four widgets, calendar/schedule synchronization and glass styling.');
 } finally { await app?.close(); }

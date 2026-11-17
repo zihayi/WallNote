@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Pin, PinOff, StickyNote, Trash2 } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Eye, EyeOff, Monitor, StickyNote, Trash2 } from 'lucide-react';
 import { createNote, noteColors } from '../../shared/state';
 import type { Action, AppState, Note, NoteColor } from '../../shared/types';
 import { api, errorMessage } from '../api';
@@ -22,11 +22,11 @@ function relativeDate(date: string): string {
 export function NoteCard({ note, onEdit, onPin, onDelete }: { note: Note; onEdit: () => void; onPin: () => void; onDelete: () => void }) {
   return <article className={`note-card ${note.color}`}>
     <button className="note-content-button" onClick={onEdit} aria-label={`编辑便签：${note.title || '无标题便签'}`}>
-      <div className="note-card-top"><span className="note-fold" /><StickyNote size={17} />{note.pinned && <span className="pinned-label"><Pin size={11} /> 在桌面</span>}</div>
+      <div className="note-card-top"><span className="note-fold" /><StickyNote size={17} />{note.pinned && <span className="pinned-label"><Monitor size={11} /> 桌面便签</span>}</div>
       <h3>{note.title || '无标题便签'}</h3>
       <p>{note.content || '点击编辑内容'}</p>
     </button>
-    <footer><span>{relativeDate(note.updatedAt)}</span><div className="note-actions"><button className={`icon-button ${note.pinned ? 'active' : ''}`} onClick={onPin} aria-label={note.pinned ? `收起便签：${note.title}` : `贴到桌面：${note.title}`} title={note.pinned ? '从桌面收起' : '贴到桌面'}>{note.pinned ? <PinOff size={15} /> : <Pin size={15} />}</button><button className="icon-button danger-hover" onClick={onDelete} aria-label={`删除便签：${note.title}`}><Trash2 size={15} /></button></div></footer>
+    <footer><span>{relativeDate(note.updatedAt)}</span><div className="note-actions"><button className={`icon-button ${note.pinned ? 'active' : ''}`} onClick={onPin} aria-label={note.pinned ? `收起便签：${note.title}` : `贴到桌面：${note.title}`} title={note.pinned ? '从桌面收起' : '显示在桌面便签中'}>{note.pinned ? <EyeOff size={15} /> : <Eye size={15} />}</button><button className="icon-button danger-hover" onClick={onDelete} aria-label={`删除便签：${note.title}`}><Trash2 size={15} /></button></div></footer>
   </article>;
 }
 
@@ -125,7 +125,10 @@ export function FloatingNote({ note, state, desktop = true }: { note: Note; stat
     if (!(await flush())) return;
     try { await api.dispatch({ type: 'note:update', id: note.id, changes: { pinned: false } }); } catch (cause) { setError(errorMessage(cause)); }
   }
-  return <FrostedPanel state={state} title="便签" icon={<StickyNote size={17} />} desktop={desktop} className={`floating-note ${note.color}`} onClose={() => void unpin()}>
+  const notes = state.notes.filter(item => item.pinned);
+  const currentIndex = notes.findIndex(item => item.id === note.id);
+  const select = (index: number) => { void api.dispatch({ type: 'note:selectDesktop', id: notes[index].id }).catch(cause => setError(errorMessage(cause))); };
+  return <FrostedPanel state={state} title="便签" widgetKey="notes" icon={<StickyNote size={17} />} desktop={desktop} className={`floating-note ${note.color}`} onClose={() => void unpin()} actions={notes.length > 1 ? <div className="note-switcher"><button className="icon-button" aria-label="上一张便签" disabled={currentIndex <= 0} onClick={() => select(currentIndex - 1)}><ChevronLeft size={13} /></button><span>{currentIndex + 1}/{notes.length}</span><button className="icon-button" aria-label="下一张便签" disabled={currentIndex >= notes.length - 1} onClick={() => select(currentIndex + 1)}><ChevronRight size={13} /></button></div> : undefined}>
     <input aria-label="便签标题" placeholder="无标题便签" value={draft.title} maxLength={120} onFocus={() => setFocusedField('title')} onPointerDown={() => setFocusedField('title')} onChange={event => change('title', event.target.value)} onBlur={() => { setFocusedField(null); void flush(); }} />
     <textarea aria-label="便签内容" placeholder="输入便签内容" value={draft.content} maxLength={50000} onFocus={() => setFocusedField('content')} onPointerDown={() => setFocusedField('content')} onChange={event => change('content', event.target.value)} onBlur={() => { setFocusedField(null); void flush(); }} />
     {error && <div className="floating-error" role="alert">{error}</div>}

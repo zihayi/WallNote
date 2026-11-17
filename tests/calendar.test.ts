@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createEvent, dateKey, eventError, eventsOnDate, monthDays, parseDate, selectedDate, shiftDate, validDate } from '../shared/calendar';
-import { createInitialState, isValidState, reduceState } from '../shared/state';
-import { plannerLayout } from '../shared/layout';
+import { activeDesktopNote, createInitialState, createNote, isValidState, reduceState } from '../shared/state';
+import { plannerLayout, upgradeDesktopLayout } from '../shared/layout';
 
 describe('local calendar dates', () => {
   it('uses local dates and round-trips leap days without UTC conversion', () => {
@@ -85,11 +85,62 @@ describe('three-column desktop layout', () => {
     expect(layout.schedule.x + layout.schedule.width).toBeLessThan(layout.calendar.x);
     expect(layout.calendar.x + layout.calendar.width).toBeLessThan(layout.tasks.x);
     expect(layout.tasks.y + layout.tasks.height).toBeLessThan(layout.notes.y);
+    expect(layout.schedule.width).toBe(layout.tasks.width);
+    expect(layout.tasks.width).toBe(layout.notes.width);
+    expect(layout.schedule.y).toBe(layout.calendar.y);
+    expect(layout.calendar.y).toBe(layout.tasks.y);
+    expect(layout.notes.y + layout.notes.height).toBe(layout.calendar.y + layout.calendar.height);
+    expect(layout.calendar.x - layout.schedule.x - layout.schedule.width).toBe(layout.tasks.x - layout.calendar.x - layout.calendar.width);
+    expect(Math.abs((layout.schedule.x + layout.tasks.x + layout.tasks.width) / 2 - (area.x + area.width / 2))).toBeLessThanOrEqual(1);
     for (const rect of Object.values(layout)) {
       expect(rect.x).toBeGreaterThanOrEqual(area.x);
       expect(rect.y).toBeGreaterThanOrEqual(area.y);
       expect(rect.x + rect.width).toBeLessThanOrEqual(area.x + area.width);
       expect(rect.y + rect.height).toBeLessThanOrEqual(area.y + area.height);
     }
+  });
+
+  it('migrates only legacy layout coordinates and preserves content', () => {
+    const old = createInitialState();
+    delete old.settings.layoutVersion;
+    old.settings.tasksPosition = { x: 900, y: 10, width: 320, height: 380 };
+    old.notes[0].position = { x: 60, y: 50, width: 320, height: 310 };
+    old.notes[0].content = '用户内容';
+    const migrated = upgradeDesktopLayout(old);
+    expect(migrated.settings.layoutVersion).toBe(4);
+    expect(migrated.settings.tasksPosition).toBeUndefined();
+    expect(migrated.notes[0].position).toBeUndefined();
+    expect(migrated.notes[0].content).toBe('用户内容');
+    expect(old.notes[0].position).toBeDefined();
+    expect(upgradeDesktopLayout(migrated)).toBe(migrated);
+  });
+});
+
+describe('explicit layer pinning and note selection', () => {
+  it('only marks a widget topmost through an explicit pin action', () => {
+    const initial = createInitialState();
+    const selected = reduceState(initial, { type: 'calendar:select', date: '2028-02-29' });
+    expect(selected.settings.topmostWidgets).toEqual([]);
+    const pinned = reduceState(selected, { type: 'widget:topmost', key: 'calendar', enabled: true });
+    expect(pinned.settings.topmostWidgets).toEqual(['calendar']);
+    expect(reduceState(pinned, { type: 'widget:topmost', key: 'calendar', enabled: true }).settings.topmostWidgets).toEqual(['calendar']);
+    expect(reduceState(pinned, { type: 'widget:topmost', key: 'calendar', enabled: false }).settings.topmostWidgets).toEqual([]);
+    expect(() => reduceState(initial, { type: 'widget:topmost', key: 'wallpaper', enabled: true })).toThrow();
+    expect(isValidState({ ...initial, settings: { ...initial.settings, topmostWidgets: ['calendar', 'calendar'] } })).toBe(false);
+  });
+
+  it('switches the active desktop note without moving or duplicating the other widgets', () => {
+    const first = { ...createNote(), pinned: true, title: '第一张' };
+    const second = { ...createNote(), pinned: true, title: '第二张' };
+    let state = reduceState(createInitialState(), { type: 'note:add', note: first });
+    state = reduceState(state, { type: 'note:add', note: second });
+    expect(activeDesktopNote(state)?.id).toBe(second.id);
+    state = reduceState(state, { type: 'widget:topmost', key: 'notes', enabled: true });
+    state = reduceState(state, { type: 'note:selectDesktop', id: first.id });
+    expect(activeDesktopNote(state)?.id).toBe(first.id);
+    expect(state.settings.topmostWidgets).toEqual(['notes']);
+    expect(state.notes.filter(note => note.pinned)).toHaveLength(2);
+    expect(isValidState(state)).toBe(true);
+    expect(() => reduceState(state, { type: 'note:selectDesktop', id: 'welcome' })).toThrow();
   });
 });

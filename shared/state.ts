@@ -12,6 +12,15 @@ export const builtInWallpapers: Wallpaper[] = [
 
 export const noteColors = ['butter', 'lavender', 'mint', 'rose', 'sky'] as const;
 
+export function validWidgetKey(value: unknown): value is string {
+  return typeof value === 'string' && (['tasks', 'calendar', 'schedule', 'notes', 'notes-empty'].includes(value) || /^note:[a-zA-Z0-9_-]{1,100}$/.test(value));
+}
+
+export function activeDesktopNote(state: AppState): Note | undefined {
+  const notes = state.notes.filter(note => note.pinned);
+  return notes.find(note => note.id === state.settings.activeDesktopNote) ?? notes[0];
+}
+
 export function createNote(): Note {
   return { id: crypto.randomUUID(), title: '', content: '', color: 'butter', pinned: false, updatedAt: new Date().toISOString() };
 }
@@ -29,9 +38,9 @@ export function createInitialState(): AppState {
     favorites: ['mist', 'coast'],
     selectedWallpaperId: 'mist',
     appliedWallpaperId: null,
-    settings: { alwaysOnTop: false, launchAtLogin: false, desktopEnabled: true, showDesktopTasks: true, showDesktopCalendar: true, showDesktopSchedule: true, showDesktopNotes: true, glassEnabled: true },
+    settings: { alwaysOnTop: false, launchAtLogin: false, desktopEnabled: true, showDesktopTasks: true, showDesktopCalendar: true, showDesktopSchedule: true, showDesktopNotes: true, glassEnabled: true, topmostWidgets: [], layoutVersion: 4 },
     notes: [
-      { id: 'welcome', title: '使用说明', content: '点击图钉，将便签贴到桌面。\n拖动顶部移动，右下角调整大小。\n\n桌面便签内容会自动保存。', color: 'butter', pinned: false, updatedAt: now },
+      { id: 'welcome', title: '使用说明', content: '点击显示按钮，将便签加入桌面。\n组件图钉用于置顶；置顶后可移动和缩放。\n\n内容会自动保存，多张便签可用箭头切换。', color: 'butter', pinned: false, updatedAt: now },
       { id: 'inspiration', title: '项目记录', content: '项目：\n负责人：\n截止日期：\n\n备注：', color: 'lavender', pinned: false, updatedAt: now },
       { id: 'little-things', title: '备忘', content: '在这里记录需要保留的信息。', color: 'mint', pinned: false, updatedAt: now },
     ],
@@ -52,10 +61,14 @@ export function reduceState(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'note:add':
       if (state.notes.some(n => n.id === action.note.id)) return state;
-      return { ...state, notes: [action.note, ...state.notes] };
+      return { ...state, notes: [action.note, ...state.notes], settings: action.note.pinned ? { ...state.settings, activeDesktopNote: action.note.id } : state.settings };
     case 'note:update':
-      return { ...state, notes: state.notes.map(note => note.id === action.id ? { ...note, ...action.changes, updatedAt: Object.keys(action.changes).every(key => key === 'position') ? note.updatedAt : new Date().toISOString() } : note) };
-    case 'note:delete': return { ...state, notes: state.notes.filter(note => note.id !== action.id) };
+      return { ...state, notes: state.notes.map(note => note.id === action.id ? { ...note, ...action.changes, updatedAt: Object.keys(action.changes).every(key => key === 'position') ? note.updatedAt : new Date().toISOString() } : note), settings: action.changes.pinned === true ? { ...state.settings, activeDesktopNote: action.id } : action.changes.pinned === false ? { ...state.settings, topmostWidgets: (state.settings.topmostWidgets ?? []).filter(key => key !== `note:${action.id}`) } : state.settings };
+    case 'note:delete': return { ...state, notes: state.notes.filter(note => note.id !== action.id), settings: { ...state.settings, topmostWidgets: (state.settings.topmostWidgets ?? []).filter(key => key !== `note:${action.id}`) } };
+    case 'note:selectDesktop': {
+      if (!state.notes.some(note => note.id === action.id && note.pinned)) throw new Error('该便签未加入桌面。');
+      return { ...state, settings: { ...state.settings, activeDesktopNote: action.id } };
+    }
     case 'task:add':
       if (!action.task.text.trim() || state.tasks.some(t => t.id === action.task.id)) return state;
       return { ...state, tasks: [action.task, ...state.tasks] };
@@ -84,6 +97,12 @@ export function reduceState(state: AppState, action: Action): AppState {
     case 'calendar:select': {
       if (!validDate(action.date)) throw new Error('日期无效。');
       return { ...state, calendarDate: action.date };
+    }
+    case 'widget:topmost': {
+      if (!validWidgetKey(action.key) || typeof action.enabled !== 'boolean') throw new Error('无效的组件置顶设置。');
+      const keys = (state.settings.topmostWidgets ?? []).filter(key => key !== action.key);
+      const visibility = { tasks: 'showDesktopTasks', calendar: 'showDesktopCalendar', schedule: 'showDesktopSchedule', notes: 'showDesktopNotes' }[action.key];
+      return { ...state, appliedWallpaperId: action.enabled ? state.appliedWallpaperId ?? state.selectedWallpaperId : state.appliedWallpaperId, settings: { ...state.settings, ...(action.enabled ? { desktopEnabled: true, ...(visibility ? { [visibility]: true } : {}) } : {}), topmostWidgets: action.enabled ? [...keys, action.key] : keys } };
     }
     case 'wallpaper:favorite': return { ...state, favorites: state.favorites.includes(action.id) ? state.favorites.filter(id => id !== action.id) : [...state.favorites, action.id] };
     case 'wallpaper:select': return allWallpapers(state).some(w => w.id === action.id) ? { ...state, selectedWallpaperId: action.id } : state;
@@ -115,6 +134,9 @@ export function isValidState(value: unknown): value is AppState {
   if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'glassEnabled'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
   if (['calendarPosition', 'schedulePosition', 'notesPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
+  if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;
+  if (value.settings.activeDesktopNote !== undefined && !isId(value.settings.activeDesktopNote)) return false;
+  if (value.settings.topmostWidgets !== undefined && (!Array.isArray(value.settings.topmostWidgets) || value.settings.topmostWidgets.length > 510 || !value.settings.topmostWidgets.every(validWidgetKey) || new Set(value.settings.topmostWidgets).size !== value.settings.topmostWidgets.length)) return false;
   if (value.events !== undefined && (!Array.isArray(value.events) || value.events.length > 10000 || !value.events.every(event => isRecord(event) && isId(event.id) && isText(event.title, 120) && event.title.trim().length > 0 && validDate(event.date) && isText(event.start, 5) && isText(event.end, 5) && isText(event.description, 5000) && noteColors.includes(event.color as Note['color']) && eventError(event as unknown as import('./types').ScheduleEvent) === null) || new Set(value.events.map(event => event.id)).size !== value.events.length)) return false;
   const notesValid = value.notes.every(n => isRecord(n) && isId(n.id) && isText(n.title, 120) && isText(n.content, 50000) && noteColors.includes(n.color as Note['color']) && typeof n.pinned === 'boolean' && isText(n.updatedAt, 50) && Number.isFinite(Date.parse(n.updatedAt)) && (n.position === undefined || (isRecord(n.position) && ['x', 'y', 'width', 'height'].every(k => typeof n.position === 'object' && Number.isFinite((n.position as Record<string, unknown>)[k])) && Number(n.position.width) >= 240 && Number(n.position.width) <= 2000 && Number(n.position.height) >= 200 && Number(n.position.height) <= 2000)));
   const tasksValid = value.tasks.every(t => isRecord(t) && isId(t.id) && isText(t.text, 500) && t.text.trim().length > 0 && typeof t.completed === 'boolean' && typeof t.priority === 'boolean' && isText(t.createdAt, 50) && Number.isFinite(Date.parse(t.createdAt)));

@@ -52,6 +52,9 @@ export interface AppState {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
     showDesktopTasks?: boolean; showDesktopCalendar?: boolean; showDesktopSchedule?: boolean; showDesktopNotes?: boolean;
     glassEnabled?: boolean;
+    topmostWidgets?: string[];
+    layoutVersion?: number;
+    activeDesktopNote?: string;
     tasksPosition?: Note['position']; calendarPosition?: Note['position']; schedulePosition?: Note['position']; notesPosition?: Note['position'];
   };
 }
@@ -60,6 +63,7 @@ export type Action =
   | { type: 'note:add'; note: Note }
   | { type: 'note:update'; id: string; changes: Partial<Pick<Note, 'title' | 'content' | 'color' | 'pinned' | 'position'>> }
   | { type: 'note:delete'; id: string }
+  | { type: 'note:selectDesktop'; id: string }
   | { type: 'task:add'; task: Task }
   | { type: 'task:toggle'; id: string }
   | { type: 'task:priority'; id: string }
@@ -70,6 +74,7 @@ export type Action =
   | { type: 'event:update'; id: string; changes: Partial<Omit<ScheduleEvent, 'id'>> }
   | { type: 'event:delete'; id: string }
   | { type: 'calendar:select'; date: string }
+  | { type: 'widget:topmost'; key: string; enabled: boolean }
   | { type: 'wallpaper:favorite'; id: string }
   | { type: 'wallpaper:select'; id: string }
   | { type: 'wallpaper:delete'; id: string }

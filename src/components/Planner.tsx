@@ -75,7 +75,7 @@ export function CalendarPanel({ state, desktop = false }: { state: AppState; des
   }, [state.events]);
   const changeMonth = (delta: number) => { const next = parseDate(`${month}-01`); next.setMonth(next.getMonth() + delta); const key = dateKey(next); if (validDate(key)) setMonth(key.slice(0, 7)); };
   const choose = async (key: string) => { if (await run({ type: 'calendar:select', date: key })) setMonth(key.slice(0, 7)); };
-  return <FrostedPanel state={state} title="日历" icon={<CalendarDays size={18} />} desktop={desktop} className="calendar-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopCalendar: false } }) : undefined}>
+  return <FrostedPanel state={state} title="日历" widgetKey="calendar" icon={<CalendarDays size={18} />} desktop={desktop} className="calendar-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopCalendar: false } }) : undefined}>
     <div className="calendar-clock"><time>{now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</time><span>{now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</span></div>
     <div className="calendar-toolbar"><h3>{Number(month.slice(0, 4))} 年 {Number(month.slice(5))} 月</h3><div><button className="calendar-today" onClick={() => void choose(dateKey())}>今天</button><button className="icon-button" aria-label="上个月" disabled={month === '1900-01'} onClick={() => changeMonth(-1)}><ChevronLeft size={17} /></button><button className="icon-button" aria-label="下个月" disabled={month === '2100-12'} onClick={() => changeMonth(1)}><ChevronRight size={17} /></button></div></div>
     <div className="calendar-weekdays">{['一', '二', '三', '四', '五', '六', '日'].map(day => <span key={day}>{day}</span>)}</div>
@@ -100,7 +100,7 @@ export function HourlySchedule({ state, desktop = false }: { state: AppState; de
     if (row && scroll.current) scroll.current.scrollTop = row.offsetTop;
   }, [date, firstTime]);
   const moveDate = (delta: number) => { const next = shiftDate(date, delta); if (validDate(next)) void run({ type: 'calendar:select', date: next }); };
-  return <FrostedPanel state={state} title="时间安排" icon={<Clock3 size={18} />} desktop={desktop} className="hourly-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopSchedule: false } }) : undefined}>
+  return <FrostedPanel state={state} title="时间安排" widgetKey="schedule" icon={<Clock3 size={18} />} desktop={desktop} className="hourly-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopSchedule: false } }) : undefined}>
     <div className="schedule-day"><div><h3>{parseDate(date).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</h3><span>{parseDate(date).toLocaleDateString('zh-CN', { weekday: 'long' })} · {events.length} 项安排</span></div><div><button className="icon-button" aria-label="前一天" disabled={date === '1900-01-01'} onClick={() => moveDate(-1)}><ChevronLeft size={17} /></button><button className="icon-button" aria-label="后一天" disabled={date === '2100-12-31'} onClick={() => moveDate(1)}><ChevronRight size={17} /></button></div></div>
     <div className="hourly-list" ref={scroll} aria-label={`${date} 按小时日程`}>{Array.from({ length: 24 }, (_, hour) => {
       const rows = events.filter(event => Number(event.start.slice(0, 2)) === hour);

@@ -40,22 +40,13 @@ internal static class DesktopHost
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint first, uint second, bool attach);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
-    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr window, IntPtr region, bool redraw);
-
-    private static void Round(IntPtr window)
-    {
-        Rect rect; GetWindowRect(window, out rect);
-        int diameter = (int)Math.Round(48 * GetDpiForWindow(window) / 96.0);
-        IntPtr region = CreateRoundRectRgn(0, 0, rect.Right - rect.Left + 1, rect.Bottom - rect.Top + 1, diameter, diameter);
-        if (region != IntPtr.Zero && SetWindowRgn(window, region, true) == 0) DeleteObject(region);
-    }
 
     private static string ClassName(IntPtr window) { var value = new StringBuilder(256); GetClassName(window, value, value.Capacity); return value.ToString(); }
     private static object Describe(IntPtr window)
@@ -65,6 +56,7 @@ internal static class DesktopHost
         int cloaked; DwmGetWindowAttribute(window, 14, out cloaked, 4);
         return new { handle = window.ToInt64().ToString(), parent = GetParent(window).ToInt64().ToString(), className = ClassName(window), visible = IsWindowVisible(window), minimized = IsIconic(window), pid = pid,
             child = (GetWindowLongPtr(window, -16).ToInt64() & 0x40000000L) != 0,
+            dpi = GetDpiForWindow(window),
             topmost = (GetWindowLongPtr(window, -20).ToInt64() & 0x00000008L) != 0, cloaked = cloaked != 0,
             bounds = new { x = rect.Left, y = rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top } };
     }
@@ -122,7 +114,7 @@ internal static class DesktopHost
             var info = new MonitorInfo { Size = Marshal.SizeOf(typeof(MonitorInfo)) };
             if (GetMonitorInfo(monitor, ref info)) { point.X = info.Monitor.Left; point.Y = info.Monitor.Top; width = info.Monitor.Right - info.Monitor.Left; height = info.Monitor.Bottom - info.Monitor.Top; }
         }
-        ScreenToClient(parent, ref point);
+        if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
         // The parent already defines the desktop layer; keep this app above older wallpaper children.
         if (!SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
     }
@@ -155,11 +147,12 @@ internal static class DesktopHost
             var window = OwnedWindow(args[1], args[2]);
             bool background = args[3] == "wallpaper";
             var hosts = Locate(true);
-            var parent = background ? hosts[3] : hosts[1];
+            var parent = hosts[3];
             if (parent == IntPtr.Zero) throw new InvalidOperationException("The wallpaper WorkerW layer could not be created.");
             ShowWindow(window, 0);
             var style = GetWindowLongPtr(window, -16).ToInt64();
             var extended = GetWindowLongPtr(window, -20).ToInt64();
+            SetWindowPos(window, new IntPtr(-2), 0, 0, 0, 0, 0x0010 | 0x0001 | 0x0002);
             SetWindowLongPtr(window, -16, new IntPtr((style & ~0x80000000L) | 0x40000000L));
             SetWindowLongPtr(window, -20, new IntPtr((extended & ~0x00040000L) | 0x00000080L));
             SetLastError(0);
@@ -174,7 +167,8 @@ internal static class DesktopHost
                 AttachThreadInput(widgetThread, desktopThread, true);
             }
             Place(window, parent, args, 4, background);
-            if (!background) Round(window);
+            // Chromium renders anti-aliased alpha corners; an integer GDI region makes them jagged.
+            SetWindowRgn(window, IntPtr.Zero, true);
             if (GetParent(window) != parent) throw new InvalidOperationException("Desktop attachment did not succeed.");
             RedrawWindow(parent, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0080);
             return new { attached = true, layer = args[3], window = Describe(window), host = Describe(parent), iconView = Describe(hosts[2]) };
@@ -183,11 +177,23 @@ internal static class DesktopHost
         {
             var window = OwnedWindow(args[1], args[2]);
             var parent = GetParent(window);
-            if (parent == IntPtr.Zero) throw new InvalidOperationException("Window is not attached.");
             Place(window, parent, args, 3, false);
-            Round(window);
             return Describe(window);
         }
+        if (args[0] == "topmost")
+        {
+            var window = OwnedWindow(args[1], args[2]);
+            Rect rect; GetWindowRect(window, out rect);
+            ShowWindow(window, 0);
+            SetParent(window, IntPtr.Zero);
+            var style = GetWindowLongPtr(window, -16).ToInt64();
+            SetWindowLongPtr(window, -16, new IntPtr((style & ~0x40000000L) | 0x80000000L));
+            SetWindowRgn(window, IntPtr.Zero, true);
+            if (!SetWindowPos(window, new IntPtr(-1), rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
+            return Describe(window);
+        }
+        if (args[0] == "route-check") return DesktopInputBridge.CheckRoute(args[1], uint.Parse(args[2]), int.Parse(args[3]), int.Parse(args[4]));
+        if (args[0] == "icon-rects") return DesktopInputBridge.IconRectangles();
         if (args[0] == "focus")
         {
             var window = OwnedWindow(args[1], args[2]);
@@ -195,15 +201,20 @@ internal static class DesktopHost
             uint currentThread = GetCurrentThreadId();
             uint targetThread = GetWindowThreadProcessId(window, out unused);
             uint desktopThread = GetWindowThreadProcessId(FindWindow("Progman", null), out unused);
-            AttachThreadInput(targetThread, desktopThread, true);
+            bool embedded = GetParent(window) != IntPtr.Zero;
+            if (embedded) AttachThreadInput(targetThread, desktopThread, true);
             bool targetAttached = AttachThreadInput(currentThread, targetThread, true);
+            uint foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out unused);
+            bool foregroundAttached = foregroundThread != 0 && foregroundThread != targetThread && AttachThreadInput(currentThread, foregroundThread, true);
             try
             {
+                SetForegroundWindow(embedded ? FindWindow("Progman", null) : window);
                 var renderer = FindWindowEx(window, IntPtr.Zero, "Chrome_RenderWidgetHostHWND", null);
                 SetFocus(renderer != IntPtr.Zero ? renderer : window);
             }
             finally
             {
+                if (foregroundAttached) AttachThreadInput(currentThread, foregroundThread, false);
                 if (targetAttached) AttachThreadInput(currentThread, targetThread, false);
             }
             return new { focused = true };
@@ -221,10 +232,12 @@ internal static class DesktopHost
         {
             var window = OwnedWindow(args[1], args[2]);
             var parent = GetParent(window);
-            if (parent == IntPtr.Zero) throw new InvalidOperationException("Window is not attached.");
             Point start; GetCursorPos(out start);
             Rect initial; GetWindowRect(window, out initial);
             double scale = GetDpiForWindow(window) / 96.0;
+            int minWidth = args.Length > 3 ? int.Parse(args[3]) : 260;
+            int minHeight = args.Length > 4 ? int.Parse(args[4]) : 260;
+            if (args.Length > 5) scale = double.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture);
             DateTime deadline = DateTime.UtcNow.AddSeconds(10);
             while (IsWindow(window) && (GetAsyncKeyState(1) & 0x8000) != 0 && DateTime.UtcNow < deadline)
             {
@@ -233,10 +246,9 @@ internal static class DesktopHost
                 var point = new Point { X = initial.Left, Y = initial.Top };
                 int width = initial.Right - initial.Left, height = initial.Bottom - initial.Top;
                 if (args[0] == "move") { point.X += dx; point.Y += dy; }
-                else { width = Math.Max((int)(260 * scale), Math.Min((int)(1600 * scale), width + dx)); height = Math.Max((int)(220 * scale), Math.Min((int)(1600 * scale), height + dy)); }
-                ScreenToClient(parent, ref point);
-                SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0004);
-                if (args[0] == "resize") Round(window);
+                else { width = Math.Max((int)(minWidth * scale), Math.Min((int)(1600 * scale), width + dx)); height = Math.Max((int)(minHeight * scale), Math.Min((int)(1600 * scale), height + dy)); }
+                if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
+                SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0004 | (args[0] == "move" ? 0x0001U : 0U));
                 Thread.Sleep(16);
             }
             return new { moved = true };
@@ -259,10 +271,11 @@ internal static class DesktopHost
         throw new ArgumentException("Unknown command.");
     }
 
+    [STAThread]
     public static int Main(string[] args)
     {
         Console.OutputEncoding = new UTF8Encoding(false);
-        try { Console.WriteLine(new JavaScriptSerializer().Serialize(Run(args))); return 0; }
+        try { if (args.Length > 0 && args[0] == "bridge") return DesktopInputBridge.Run(uint.Parse(args[1])); Console.WriteLine(new JavaScriptSerializer().Serialize(Run(args))); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error.Message); return 1; }
     }
 }

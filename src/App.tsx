@@ -179,9 +179,9 @@ export default function App() {
         </>}
 
         {page === 'notes' && <>
-          <div className="page-heading"><div><h1>便签</h1><p>编辑内容，或点击图钉贴到桌面。</p></div><button className="button primary" onClick={() => setNoteEditor('new')}><Plus size={17} />新建便签</button></div>
+          <div className="page-heading"><div><h1>便签</h1><p>编辑内容，或点击显示按钮加入桌面便签。</p></div><button className="button primary" onClick={() => setNoteEditor('new')}><Plus size={17} />新建便签</button></div>
           <div className="filter-bar"><div className="tabs"><button className={noteFilter === 'all' ? 'active' : ''} onClick={() => setNoteFilter('all')}>全部便签<span>{state.notes.length}</span></button><button className={noteFilter === 'pinned' ? 'active' : ''} onClick={() => setNoteFilter('pinned')}><Pin size={14} />桌面便签<span>{state.notes.filter(n => n.pinned).length}</span></button></div><span className="result-count">按最近编辑排序</span></div>
-          {visibleNotes.length ? <div className="notes-grid full-notes-grid">{visibleNotes.map(noteCard)}<button className="add-note-card" onClick={() => setNoteEditor('new')}><Plus size={25} /><span>新建便签</span></button></div> : <Empty icon={<StickyNote size={30} />} title="暂无便签" description={noteFilter === 'pinned' ? '在全部便签中点击图钉，将便签贴到桌面。' : '点击“新建便签”添加内容。'} />}
+          {visibleNotes.length ? <div className="notes-grid full-notes-grid">{visibleNotes.map(noteCard)}<button className="add-note-card" onClick={() => setNoteEditor('new')}><Plus size={25} /><span>新建便签</span></button></div> : <Empty icon={<StickyNote size={30} />} title="暂无便签" description={noteFilter === 'pinned' ? '在全部便签中点击显示按钮，将便签加入桌面。' : '点击“新建便签”添加内容。'} />}
         </>}
 
         {page === 'tasks' && <>
@@ -190,9 +190,9 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>桌面组件、外观与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.3.0'}</span></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>桌面组件、外观与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.4.0'}</span></div>
           <div className="settings-layout"><div><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
-            <div className="setting-row"><div><h3>桌面模式</h3><p>将壁纸和组件嵌入 Windows 桌面</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
+            <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方；点击组件图钉后置顶，可移动和缩放</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
             {([
               ['showDesktopSchedule', '显示时间安排', '左侧显示选中日期的按小时日程'],
               ['showDesktopCalendar', '显示日历', '中间显示月历和日期安排'],
