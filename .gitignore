@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+dist-native/
+release/
+test-results/
+.vite/
+*.log
+public/wallpapers/*.jpg
+public/icon.png
+.npmrc

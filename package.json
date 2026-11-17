@@ -1,0 +1,53 @@
+{
+  "name": "wallnote",
+  "version": "0.2.0",
+  "private": true,
+  "description": "壁纸、桌面便签与待办，让桌面成为自己的小天地。",
+  "author": "WallNote",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 127.0.0.1",
+    "assets": "node scripts/generate-assets.mjs",
+    "postinstall": "npm run assets",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build && node scripts/build-electron.mjs",
+    "start": "node scripts/start.mjs",
+    "test": "vitest run",
+    "test:ui": "node scripts/smoke-ui.mjs",
+    "test:desktop": "node scripts/smoke-desktop.mjs",
+    "docs:preview": "vite build && node scripts/readme-preview.mjs",
+    "dist": "npm run build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^45.3.3",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
+    "sharp": "^0.35.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0",
+    "vitest": "^5.1.0"
+  },
+  "build": {
+    "appId": "com.wallnote.desktop",
+    "productName": "WallNote",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
+    "asar": true,
+    "extraResources": [{ "from": "dist-native", "to": "native", "filter": ["*.exe"] }],
+    "win": { "target": "portable", "icon": "public/icon.png", "signExecutable": false },
+    "portable": { "artifactName": "WallNote-${version}-portable.exe" }
+  }
+}
