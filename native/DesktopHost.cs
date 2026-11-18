@@ -47,6 +47,25 @@ internal static class DesktopHost
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr window, IntPtr region, bool redraw);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+
+    private static double Scale(IntPtr window, string[] args, int index) {
+        return args.Length > index ? double.Parse(args[index], System.Globalization.CultureInfo.InvariantCulture) : GetDpiForWindow(window) / 96.0;
+    }
+
+    // Chromium's rounded card has transparent corners. After a WorkerW child becomes
+    // a popup, Windows can composite those pixels as opaque white. Clip the *floating*
+    // HWND as well, in physical pixels, matching the renderer's 20 DIP radius.
+    private static void ClipFloatingWidget(IntPtr window, int width, int height, double scale) {
+        int diameter = Math.Max(1, Math.Min(Math.Min(width, height), (int)Math.Round(40 * scale)));
+        var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+        if (region == IntPtr.Zero) throw new InvalidOperationException("Could not create widget outline.");
+        if (SetWindowRgn(window, region, true) == 0) {
+            DeleteObject(region); // On success the region belongs to Windows.
+            throw new InvalidOperationException("Could not apply widget outline.");
+        }
+    }
 
     private static string ClassName(IntPtr window) { var value = new StringBuilder(256); GetClassName(window, value, value.Capacity); return value.ToString(); }
     private static object Describe(IntPtr window)
@@ -166,9 +185,9 @@ internal static class DesktopHost
                 uint desktopThread = GetWindowThreadProcessId(parent, out unused);
                 AttachThreadInput(widgetThread, desktopThread, true);
             }
+            // Embedded cards already use a wallpaper-matched underlay, including corners.
+            SetWindowRgn(window, IntPtr.Zero, false);
             Place(window, parent, args, 4, background);
-            // Chromium renders anti-aliased alpha corners; an integer GDI region makes them jagged.
-            SetWindowRgn(window, IntPtr.Zero, true);
             if (GetParent(window) != parent) throw new InvalidOperationException("Desktop attachment did not succeed.");
             RedrawWindow(parent, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0080);
             return new { attached = true, layer = args[3], window = Describe(window), host = Describe(parent), iconView = Describe(hosts[2]) };
@@ -178,6 +197,15 @@ internal static class DesktopHost
             var window = OwnedWindow(args[1], args[2]);
             var parent = GetParent(window);
             Place(window, parent, args, 3, false);
+            if (parent == IntPtr.Zero) ClipFloatingWidget(window, int.Parse(args[5]), int.Parse(args[6]), Scale(window, args, 7));
+            return Describe(window);
+        }
+        if (args[0] == "outline")
+        {
+            var window = OwnedWindow(args[1], args[2]);
+            Rect rect;
+            if (GetParent(window) == IntPtr.Zero && GetWindowRect(window, out rect))
+                ClipFloatingWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
             return Describe(window);
         }
         if (args[0] == "topmost")
@@ -188,7 +216,7 @@ internal static class DesktopHost
             SetParent(window, IntPtr.Zero);
             var style = GetWindowLongPtr(window, -16).ToInt64();
             SetWindowLongPtr(window, -16, new IntPtr((style & ~0x40000000L) | 0x80000000L));
-            SetWindowRgn(window, IntPtr.Zero, true);
+            ClipFloatingWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
             if (!SetWindowPos(window, new IntPtr(-1), rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
             return Describe(window);
         }
@@ -234,10 +262,10 @@ internal static class DesktopHost
             var parent = GetParent(window);
             Point start; GetCursorPos(out start);
             Rect initial; GetWindowRect(window, out initial);
-            double scale = GetDpiForWindow(window) / 96.0;
+            double scale = Scale(window, args, 5);
             int minWidth = args.Length > 3 ? int.Parse(args[3]) : 260;
             int minHeight = args.Length > 4 ? int.Parse(args[4]) : 260;
-            if (args.Length > 5) scale = double.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture);
+            int lastWidth = initial.Right - initial.Left, lastHeight = initial.Bottom - initial.Top;
             DateTime deadline = DateTime.UtcNow.AddSeconds(10);
             while (IsWindow(window) && (GetAsyncKeyState(1) & 0x8000) != 0 && DateTime.UtcNow < deadline)
             {
@@ -247,6 +275,9 @@ internal static class DesktopHost
                 int width = initial.Right - initial.Left, height = initial.Bottom - initial.Top;
                 if (args[0] == "move") { point.X += dx; point.Y += dy; }
                 else { width = Math.Max((int)(minWidth * scale), Math.Min((int)(1600 * scale), width + dx)); height = Math.Max((int)(minHeight * scale), Math.Min((int)(1600 * scale), height + dy)); }
+                if (parent == IntPtr.Zero && (width != lastWidth || height != lastHeight)) {
+                    ClipFloatingWidget(window, width, height, scale); lastWidth = width; lastHeight = height;
+                }
                 if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
                 SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0004 | (args[0] == "move" ? 0x0001U : 0U));
                 Thread.Sleep(16);

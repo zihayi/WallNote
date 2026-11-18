@@ -27,12 +27,22 @@ async function windowInfo(page) {
 }
 async function mouse(page, locator, mode = 'click', extra = []) {
   const info = await windowInfo(page);
+  // A Win32 resize can finish before Chromium has consumed WM_SIZE/DPI changes.
+  await expect.poll(() => page.evaluate(({w,h}) => Math.max(Math.abs(innerWidth * devicePixelRatio - w), Math.abs(innerHeight * devicePixelRatio - h)), {w:info.bounds.width,h:info.bounds.height})).toBeLessThan(3);
   const box = await locator.boundingBox();
-  const factor = info.bounds.width / await page.evaluate(() => innerWidth);
-  const x = Math.round(info.bounds.x + (box.x + Math.min(box.width / 2, 30)) * factor);
-  const y = Math.round(info.bounds.y + (box.y + Math.min(box.height / 2, 24)) * factor);
+  const [width, height] = await page.evaluate(() => [innerWidth, innerHeight]);
   const owner = await app.evaluate(() => process.pid);
-  await execute(inputHelper, [mode, x, y, ...extra, ...(info.child ? [`desktop:${info.handle}`] : []), owner].map(String), { windowsHide: true });
+  // Desktop icons take priority. Only send input to an unobstructed point inside the
+  // intended element, including on laptops where icons can overlap the left column.
+  for (const [fx, fy] of [[.5, .5], [.8, .25], [.7, .75], [.25, .25], [.25, .75]]) {
+    const cx = box.x + box.width * fx, cy = box.y + box.height * fy;
+    const x = info.bounds.x + Math.round(cx * info.bounds.width / width);
+    const y = info.bounds.y + Math.round(cy * info.bounds.height / height);
+    if (info.child && !(await native('route-check', info.handle, owner, x, y)).allowed) continue;
+    await execute(inputHelper, [mode, x, y, ...extra, ...(info.child ? [`desktop:${info.handle}`] : []), owner].map(String), { windowsHide: true });
+    return { cx, cy };
+  }
+  throw new Error(`Test element covered; no input sent: ${locator}`);
 }
 function widget(kind) { return app.windows().find(page => new URL(page.url()).searchParams.get('widget') === kind); }
 
@@ -73,9 +83,22 @@ try {
 
   const today = await manager.evaluate(() => window.wallnote.getState().then(state => state.calendarDate));
   const tomorrow = await calendar.evaluate(date => { const value = new Date(`${date}T12:00:00`); value.setDate(value.getDate() + 1); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`; }, today);
-  for (const date of [tomorrow, today]) {
+  const edges = await calendar.locator('.calendar-grid button:not(.outside-month)').evaluateAll(buttons => [buttons[0], buttons.at(-1)].map(b => b.getAttribute('aria-label').split(' ')[1]));
+  await calendar.evaluate(() => {
+    window.__testHits = {};
+    for (const type of ['mousemove', 'mousedown', 'mouseup', 'click']) document.addEventListener(type, e => {
+      window.__testHits[type] = [e.clientX, e.clientY, e.target.closest('button')?.getAttribute('aria-label')];
+    }, true);
+  });
+  for (const date of [...edges, tomorrow, today]) {
     const button = calendar.getByRole('button', { name: `选择日期 ${date}`, exact: true });
-    await mouse(calendar, button);
+    await calendar.evaluate(() => { window.__testHits = {}; });
+    const { cx, cy } = await mouse(calendar, button);
+    const hits = await calendar.evaluate(() => window.__testHits);
+    const down = hits.mousedown;
+    expect(down, `native click at ${cx}, ${cy}, received ${JSON.stringify(hits)}`).toBeDefined();
+    expect(Math.abs(down[0] - cx)).toBeLessThan(2);
+    expect(Math.abs(down[1] - cy)).toBeLessThan(2);
     await expect(button).toHaveAttribute('aria-pressed', 'true');
     await expect(schedule.locator('.schedule-event')).toHaveCount(date === today ? 1 : 0);
     expect((await windowInfo(calendar)).topmost).toBe(false);
@@ -102,12 +125,18 @@ try {
 
   await mouse(calendar, calendar.getByRole('button', { name: '置顶日历', exact: true }));
   await expect.poll(() => windowInfo(calendar)).toMatchObject({ child: false, topmost: true });
-  await mouse(calendar, calendar.getByRole('button', { name: '拖动调整日历大小', exact: true }), 'drag', [-650, -650]);
-  await expect.poll(async () => (await windowInfo(calendar)).bounds.width).toBe(330);
-  expect((await windowInfo(calendar)).bounds.height).toBe(550);
+  const calendarHandle = (await windowInfo(calendar)).handle;
+  const assertOutline = kind => execute(inputHelper, ['outline', calendarHandle, String(owner), kind], { windowsHide: true });
+  await assertOutline('floating');
+  const scale = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().scaleFactor);
+  await mouse(calendar, calendar.getByRole('button', { name: '拖动调整日历大小', exact: true }), 'drag', [-Math.ceil(650 * scale), -Math.ceil(650 * scale)]);
+  await expect.poll(async () => Math.abs((await windowInfo(calendar)).bounds.width - 330 * scale)).toBeLessThanOrEqual(1);
+  expect(Math.abs((await windowInfo(calendar)).bounds.height - 550 * scale)).toBeLessThanOrEqual(1);
+  await assertOutline('floating');
   expect(await calendar.locator('.calendar-agenda').evaluate(el => el.clientHeight)).toBeGreaterThan(65);
   await mouse(calendar, calendar.getByRole('button', { name: '置顶日历', exact: true }));
-  await expect.poll(() => windowInfo(calendar)).toMatchObject({ child: true, topmost: false, bounds: originalCalendar });
+  await expect.poll(() => windowInfo(calendar), { message: `Unpin after resize: ${JSON.stringify(await calendar.evaluate(() => window.__testHits))}` }).toMatchObject({ child: true, topmost: false, bounds: originalCalendar });
+  await assertOutline('embedded');
 
   await native('restore-desktop'); shownDesktop = false;
   await manager.evaluate(() => window.wallnote.dispatch({ type: 'note:add', note: { id: 'second-note', title: '第二张便签', content: '切换测试', color: 'mint', pinned: true, updatedAt: new Date().toISOString() } }));

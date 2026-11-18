@@ -108,7 +108,7 @@ export class DesktopController {
     }
     const pixels = screen.dipToScreenRect(null, entry.bounds);
     if (topmost) {
-      const actual = await this.native<{ bounds: Rectangle }>('topmost', entry.handle, String(process.pid));
+      const actual = await this.native<{ bounds: Rectangle }>('topmost', entry.handle, String(process.pid), String(screen.getDisplayMatching(entry.bounds).scaleFactor));
       entry.bounds = screen.screenToDipRect(null, actual.bounds);
     }
     else await this.native('attach', entry.handle, String(process.pid), 'widget', ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
@@ -257,7 +257,7 @@ export class DesktopController {
     await this.load(win, query);
     await win.webContents.setVisualZoomLevelLimits(1, 1);
     const pixels = screen.dipToScreenRect(null, bounds);
-    if (topmost) await this.native('topmost', handle, String(process.pid));
+    if (topmost) await this.native('topmost', handle, String(process.pid), String(screen.getDisplayMatching(bounds).scaleFactor));
     else await this.native('attach', handle, String(process.pid), wallpaper ? 'wallpaper' : 'widget', ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
     entry.attached = true;
     win.showInactive();
@@ -296,6 +296,10 @@ export class DesktopController {
       await this.native('position', entry.handle, String(process.pid), String(result.window.bounds.x), String(result.window.bounds.y), String(size.width), String(size.height));
       if (entry.layerVersion !== version || !entry.attached) return null;
       position = screen.screenToDipRect(null, { ...result.window.bounds, ...size });
+    }
+    if (entry.topmost && (display.id !== entry.displayId || position.width !== entry.bounds.width || position.height !== entry.bounds.height)) {
+      await this.native('outline', entry.handle, String(process.pid), String(display.scaleFactor));
+      if (entry.layerVersion !== version || !entry.attached) return null;
     }
     entry.bounds = position;
     await this.normalizeScale(entry);

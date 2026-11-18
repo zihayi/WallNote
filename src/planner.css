@@ -40,8 +40,7 @@ html[data-view='workspace'] body { overflow: hidden; }
 .widget-pin[aria-busy='true'] { cursor: progress; }
 .frost-header { transition: border-color 160ms ease; }
 .is-topmost > .frost-header { border-bottom-color: #729c855c; }
-.native-panel::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 0 1px #69917a75; opacity: 0; transition: opacity 160ms ease; }
-.native-panel.is-topmost::after { opacity: 1; }
+.floating-composite > .native-panel { border: 0; box-shadow: none; }
 /* Only animate the card; the wallpaper-matched underlay and native hit bounds stay put. */
 @media (prefers-reduced-motion: no-preference) {
   html[data-widget-motion='staged'] .native-panel { opacity: 0; }

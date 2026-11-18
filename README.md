@@ -76,7 +76,7 @@ npm run dist      # 生成 Windows x64 安装程序和 SHA-256 校验文件
 
 ## 手机同步
 
-使用 WallNote v0.6.2 和 CalendarBridge Android v4.0 或更新版本：
+使用 WallNote v0.6.3 和 CalendarBridge Android v4.0 或更新版本：
 
 1. 手机和电脑连接同一 Wi-Fi，打开 WallNote 和手机日历助手。
 2. 点击 WallNote 桌面日历或管理面板上的「手机同步 → 配对手机」。

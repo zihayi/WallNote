@@ -17,6 +17,12 @@ internal static class DesktopInput
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] private static extern int GetWindowRgn(IntPtr window, IntPtr region);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] private static extern bool PtInRegion(IntPtr region, int x, int y);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr region);
     [StructLayout(LayoutKind.Sequential)] private struct GuiInfo { public int Size; public uint Flags; public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret; public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder value, int max);
@@ -31,6 +37,20 @@ internal static class DesktopInput
     public static void Main(string[] args)
     {
         SetThreadDpiAwarenessContext(new IntPtr(-4));
+        if (args[0] == "outline") {
+            var window = new IntPtr(long.Parse(args[1])); uint pid; Rect box;
+            GetWindowThreadProcessId(window, out pid);
+            if (pid != uint.Parse(args[2]) || !GetWindowRect(window, out box)) throw new ArgumentException("Not a test widget.");
+            var region = CreateRectRgn(0, 0, 0, 0);
+            try {
+                int w = box.Right - box.Left, h = box.Bottom - box.Top;
+                int kind = GetWindowRgn(window, region);
+                if (args[3] == "embedded") { if (kind != 0) throw new Exception("Desktop underlay is still clipped."); }
+                else if (kind == 0 || PtInRegion(region, 2, 2) || PtInRegion(region, w-3, 2) || PtInRegion(region, 2, h-3) || PtInRegion(region, w-3, h-3)
+                         || !PtInRegion(region, w/2, 2) || !PtInRegion(region, w/2, h-3) || !PtInRegion(region, w-3, h/2)) throw new Exception("Windows silhouette does not fit the current widget size.");
+            } finally { DeleteObject(region); }
+            return;
+        }
         Point original; GetCursorPos(out original);
         int x = int.Parse(args[1]), y = int.Parse(args[2]);
         uint owner = uint.Parse(args[args.Length - 1]);
@@ -44,7 +64,8 @@ internal static class DesktopInput
             if (hitOwner != owner && !CanRoute(desktopHandle, owner, x, y)) throw new InvalidOperationException("Test widget lost visibility; input cancelled.");
             Console.WriteLine("hit=" + Describe(WindowFromPoint(new Point { X = x, Y = y })));
             if (args[0] == "wheel") { mouse_event(0x0800, 0, 0, unchecked((uint)int.Parse(args[3])), UIntPtr.Zero); Thread.Sleep(400); return; }
-            mouse_event(2, 0, 0, 0, UIntPtr.Zero); pressed = true; Thread.Sleep(120);
+            mouse_event(2, 0, 0, 0, UIntPtr.Zero); pressed = true;
+            Thread.Sleep(args[0] == "drag" ? 450 : 120); // Allow the native drag helper to acquire its initial point.
             if (args[0] == "drag") {
                 int dx = int.Parse(args[3]), dy = int.Parse(args[4]);
                 for (int i = 1; i <= 15; i++) { SetCursorPos(x + dx * i / 15, y + dy * i / 15); Thread.Sleep(30); }

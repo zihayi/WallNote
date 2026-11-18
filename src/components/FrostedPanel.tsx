@@ -46,7 +46,7 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
   // WorkerW child windows can flatten per-pixel alpha into a rectangular surface. In that
   // layer, paint the matching, unblurred wallpaper underneath the rounded card. This keeps
   // the edge anti-aliased without depending on child-window alpha or a jagged GDI region.
-  // Floating windows use actual transparency. Surface metadata follows the native layer,
+  // Floating windows additionally clip the native HWND to this silhouette. Surface metadata follows the native layer,
   // so a pin/unpin transition cannot briefly use the wrong composition mode.
   const embedded = surface ? !surface.topmost : !topmost;
   return <div className={`native-widget-root ${embedded ? 'desktop-composite' : 'floating-composite'}`}>

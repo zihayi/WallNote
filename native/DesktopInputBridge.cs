@@ -145,9 +145,20 @@ internal static class DesktopInputBridge
 
     private static IntPtr HandleMouse(int code, IntPtr message, IntPtr address) {
         if (code < 0 || Targets.Count == 0) return CallNextHookEx(Hook, code, message, address);
+        uint type = (uint)message.ToInt64();
+        if (type != 0x0200 && type != 0x0201 && type != 0x0202 && type != 0x020A) return CallNextHookEx(Hook, code, message, address);
+        // MSLLHOOKSTRUCT.pt is in physical screen pixels. Windows can enter a low-level
+        // callback in a different DPI context than Run(), virtualizing GetWindowRect
+        // and ScreenToClient. Keep hit testing, icon priority and emitted offsets in
+        // the same physical space. Electron converts to input DIPs exactly once.
+        var previousDpi = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try { if (previousDpi != IntPtr.Zero && RouteMouse(type, address)) return new IntPtr(1); }
+        finally { if (previousDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpi); }
+        return CallNextHookEx(Hook, code, message, address);
+    }
+
+    private static bool RouteMouse(uint type, IntPtr address) {
         try {
-            uint type = (uint)message.ToInt64();
-            if (type != 0x0200 && type != 0x0201 && type != 0x0202 && type != 0x020A) return CallNextHookEx(Hook, code, message, address);
             var data = (MouseData)Marshal.PtrToStructure(address, typeof(MouseData));
             Target target = FindTarget(Captured);
             if (target == null || !Owned(Captured)) { Captured = IntPtr.Zero; Manipulation = null; target = null; }
@@ -168,7 +179,7 @@ internal static class DesktopInputBridge
             if (target == null) {
                 if (Hovered != IntPtr.Zero && Owned(Hovered)) Emit(Hovered, "leave", data, false, 0);
                 Hovered = IntPtr.Zero;
-                return CallNextHookEx(Hook, code, message, address);
+                return false;
             }
             IntPtr handle = Handle(target);
             if (type == 0x0201) {
@@ -187,15 +198,15 @@ internal static class DesktopInputBridge
             }
             if (!target.pinned) {
                 if (type == 0x0200) {
-                    if (Captured == IntPtr.Zero && (GetAsyncKeyState(1) & 0x8000) != 0) return CallNextHookEx(Hook, code, message, address);
+                    if (Captured == IntPtr.Zero && (GetAsyncKeyState(1) & 0x8000) != 0) return false;
                     if (data.Time - LastMoveTime >= 8) { Emit(handle, "move", data, Captured != IntPtr.Zero, 0); LastMoveTime = data.Time; }
                 } else Emit(handle, type == 0x0201 ? "down" : type == 0x0202 ? "up" : "wheel", data, type == 0x0201, (short)(data.Data >> 16));
                 Hovered = handle;
             }
             bool suppress = !target.pinned && type != 0x0200;
             if (type == 0x0202) { Captured = IntPtr.Zero; Manipulation = null; }
-            return suppress ? new IntPtr(1) : CallNextHookEx(Hook, code, message, address);
-        } catch { return CallNextHookEx(Hook, code, message, address); }
+            return suppress;
+        } catch { return false; } // On failure, leave the event to Windows.
     }
 
     public static int Run(uint owner) {
