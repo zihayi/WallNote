@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Grip, Pin, PinOff, Settings, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Grip, Pin, Settings, X } from 'lucide-react';
 import { allWallpapers } from '../../shared/state';
 import type { AppState, DesktopSurface } from '../../shared/types';
 import { api, blurredWallpaperURL, errorMessage, isDesktop, wallpaperURL } from '../api';
@@ -9,14 +9,16 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
   state: AppState; title: string; widgetKey: string; icon?: ReactNode; children: ReactNode; desktop?: boolean; className?: string; onClose?: () => void; actions?: ReactNode;
 }) {
   const [surface, setSurface] = useState<DesktopSurface | null>(null);
-  const [pinBusy, setPinBusy] = useState(false);
+  const [pinIntent, setPinIntent] = useState<boolean | null>(null);
+  const changing = useRef(false);
   const [pinError, setPinError] = useState('');
-  const topmost = (state.settings.topmostWidgets ?? []).includes(widgetKey);
+  const topmost = surface?.topmost ?? (state.settings.topmostWidgets ?? []).includes(widgetKey);
   const togglePin = async () => {
-    setPinBusy(true);
+    if (changing.current) return;
+    changing.current = true; setPinIntent(!topmost);
     try { await api.dispatch({ type: 'widget:topmost', key: widgetKey, enabled: !topmost }); setPinError(''); }
     catch (error) { setPinError(errorMessage(error)); }
-    finally { setPinBusy(false); }
+    finally { changing.current = false; setPinIntent(null); }
   };
   useEffect(() => {
     if (!desktop || !isDesktop) return;
@@ -34,7 +36,7 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
     <div className="frost-tint" aria-hidden="true" />
     <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? topmost ? '拖动以移动组件' : '点击图钉置顶后可移动和调整大小' : undefined} onPointerDown={event => { if (desktop && topmost) beginDesktopManipulation(event, 'move'); }}>
       <div className="frost-title">{desktop && topmost ? <Grip size={15} /> : icon}<h2>{title}</h2></div>
-      <div className="frost-header-actions">{actions}<button className={`icon-button widget-pin ${topmost ? 'active' : ''}`} aria-label={`置顶${title}`} aria-pressed={topmost} disabled={pinBusy} title={topmost ? '取消置顶，返回图标下方' : '置于所有窗口上方'} onClick={() => void togglePin()}>{topmost ? <PinOff size={14} /> : <Pin size={14} />}</button>{desktop && <button className="icon-button" aria-label="打开管理面板" title="管理面板" onClick={() => void api.desktopControl('showManager')}><Settings size={15} /></button>}{onClose && <button className="icon-button" aria-label={`收起${title}`} onClick={onClose}><X size={16} /></button>}</div>
+      <div className="frost-header-actions">{actions}<button className={`icon-button widget-pin ${(pinIntent ?? topmost) ? 'active' : ''}`} aria-label={`置顶${title}`} aria-pressed={topmost} aria-busy={pinIntent !== null} aria-disabled={pinIntent !== null} title={pinIntent !== null ? pinIntent ? '正在置顶…' : '正在返回桌面…' : topmost ? '取消置顶，返回图标下方' : '置于所有窗口上方'} onClick={() => void togglePin()}><Pin size={14} /></button>{desktop && <button className="icon-button" aria-label="打开管理面板" title="管理面板" onClick={() => void api.desktopControl('showManager')}><Settings size={15} /></button>}{onClose && <button className="icon-button" aria-label={`收起${title}`} onClick={onClose}><X size={16} /></button>}</div>
     </header>
     {children}
     {pinError && <p className="widget-error" role="alert">{pinError}</p>}

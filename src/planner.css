@@ -34,6 +34,24 @@ html[data-view='workspace'] body { overflow: hidden; }
 .frost-header .icon-button { color: #637e6a; width: 26px; height: 26px; margin: 0; opacity: .8; }
 .frost-header .icon-button:hover { background: #ffffff65; opacity: 1; }
 .frost-header .widget-pin.active { color: #326a51; background: #e4f1e9b0; opacity: 1; }
+.widget-pin svg { transform: rotate(28deg); transition: transform 170ms cubic-bezier(.2,.8,.22,1), fill 120ms ease; }
+.widget-pin.active svg { transform: rotate(0); fill: #477c6630; }
+.widget-pin:active svg { scale: .88; }
+.widget-pin[aria-busy='true'] { cursor: progress; }
+.frost-header { transition: border-color 160ms ease; }
+.is-topmost > .frost-header { border-bottom-color: #729c855c; }
+.native-panel::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 0 1px #69917a75; opacity: 0; transition: opacity 160ms ease; }
+.native-panel.is-topmost::after { opacity: 1; }
+/* Only animate the card; the wallpaper-matched underlay and native hit bounds stay put. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-widget-motion='staged'] .native-panel { opacity: 0; }
+  html[data-widget-motion='visible'] .native-panel { animation: widget-arrive 155ms cubic-bezier(.16,.8,.25,1) backwards; }
+  html[data-widget-motion='leaving'] .native-panel { pointer-events: none; animation: widget-leave 100ms ease-in forwards; }
+  .modal { animation: dialog-arrive 145ms cubic-bezier(.18,.8,.24,1); }
+}
+@keyframes widget-arrive { from { opacity: 0; transform: translateY(4px) scale(.989); } to { opacity: 1; transform: none; } }
+@keyframes widget-leave { from { opacity: 1; } to { opacity: 0; transform: translateY(2px) scale(.99); } }
+@keyframes dialog-arrive { from { opacity: 0; transform: translateY(5px) scale(.99); } to { opacity: 1; transform: none; } }
 .native-panel .floating-drag { cursor: default; }
 .native-panel.is-topmost .floating-drag { cursor: grab; }
 .note-switcher { display: flex; align-items: center; gap: 1px; }
@@ -155,13 +173,34 @@ html[data-view='workspace'] body { overflow: hidden; }
 .phone-settings .settings-description code { overflow-wrap: anywhere; font-size: 10px; }
 .phone-connection-status { display: flex; align-items: center; gap: 10px; padding: 14px; background: #f4f5f1; border-radius: 9px; margin: 17px 0; }
 .phone-connection-status > i { height: 7px; width: 7px; border-radius: 50%; background: #b7bcaf; }
-.phone-connection-status.connected > i { background: #7a9c72; }
+.phone-sync-entry { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; min-height: 33px; border: 1px solid #dfe7df; border-radius: 8px; background: #f6f9f5; color: #4e6e5b; white-space: nowrap; }
+.phone-sync-entry:hover { border-color: #b2c8b7; background: #edf4ed; }
+.phone-sync-entry strong { font-size: 12px; font-weight: 550; }
+.phone-entry-state { display: inline-flex; align-items: center; gap: 5px; color: #65766c; font-size: 11px; }
+.phone-entry-state i { width: 6px; height: 6px; border-radius: 50%; background: #99a59d; flex: none; }
+:is(.phone-sync-entry,.phone-connection-status)[data-tone='online'] i { background: #548b64; }
+:is(.phone-sync-entry,.phone-connection-status)[data-tone='waiting'] i { background: #b39058; }
+:is(.phone-sync-entry,.phone-connection-status)[data-tone='error'] i { background: #b1695b; }
+.frost-header .phone-sync-entry { background: #ffffff70; border-color: #ffffff84; padding: 3px 7px; min-height: 26px; gap: 5px; }
+.frost-header .phone-sync-entry:hover { background: #ffffffa8; }
+.frost-header .phone-sync-entry strong, .frost-header .phone-entry-state { font-size: 10px; }
+.frost-header .phone-sync-entry > svg:last-child { display: none; }
+.phone-settings { scroll-margin-top: 86px; }
+.phone-settings:focus-visible { outline: 2px solid #82a58e; outline-offset: 3px; }
+.phone-action-feedback { font-size: 11px; color: var(--green-dark); margin: 8px 0; }
 .phone-connection-status strong { display: block; font-size: 12px; font-weight: 500; color: #6b7e60; }
 .phone-connection-status span { display: block; font-size: 10px; color: #98a38e; margin-top: 5px; }
 .phone-calendar-select { display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: #849478; }
 .phone-calendar-select select { max-width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #dfe7d8; border-radius: 7px; background: #f8faf5; color: #647b55; font-size: 12px; }
 .phone-permission-status { display: flex; gap: 15px; flex-wrap: wrap; margin: 13px 0; font-size: 10px; color: #8c9c7e; }
 .phone-settings .settings-buttons { flex-wrap: wrap; }
+.phone-pair-request { margin: 14px 0; padding: 16px; border: 1px solid #d8e6d0; border-radius: 10px; background: #f4f8ef; }
+.phone-pair-request > strong { font-size: 12px; color: #607652; }
+.phone-pair-request > p { margin-top: 9px; font-size: 11px; color: #829176; }
+.phone-pair-code { margin: 12px 0; font: 26px ui-monospace, monospace; letter-spacing: 7px; color: #4d6d3c; }
+.phone-advanced { margin-top: 18px; font-size: 11px; color: #87977a; }
+.phone-advanced > summary { cursor: pointer; }
+.phone-advanced > p { margin-top: 12px; }
 .event-confirm { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .event-confirm > p { width: 100%; font-size: 11px; color: #9b7962; margin-bottom: 5px; }
 .frost-panel .modal-backdrop { padding: 14px; background: #2f4f3b48; z-index: 20; }
@@ -225,6 +264,7 @@ html[data-view='workspace'] body { overflow: hidden; }
   .calendar-agenda .planner-empty { padding: 10px 4px; min-height: 60px; }
 }
 @container widget (max-width: 300px) {
+  .frost-header .phone-sync-entry strong { display: none; }
   .note-switcher > span { display: none; }
   .frost-header-actions { gap: 2px; }
   .frost-header .icon-button { width: 23px; }
@@ -250,6 +290,7 @@ html[data-view='workspace'] body { overflow: hidden; }
   .calendar-management-grid { grid-template-columns: minmax(230px,.9fr) minmax(280px,1.2fr); padding: 15px; gap: 15px; }
 }
 @media (max-width: 680px) {
+  .topbar .phone-entry-state, .topbar .phone-sync-entry > svg:last-child { display: none; }
   .sidebar-shortcuts, .workspace-date { display: none; }
   .planner-workspace:not(.standalone-workspace) .planner-workspace-grid { display: flex; flex-direction: column; gap: 15px; }
   .planner-workspace:not(.standalone-workspace) .hourly-panel, .planner-workspace:not(.standalone-workspace) .calendar-panel { height: 600px; }

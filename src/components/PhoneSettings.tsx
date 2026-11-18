@@ -1,28 +1,72 @@
-import { useState } from 'react';
-import { RefreshCw, Smartphone, Unplug, Upload } from 'lucide-react';
-import type { AppState } from '../../shared/types';
-import { emptyPhoneSync } from '../../shared/phone';
-import { api, errorMessage } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { RefreshCw, Smartphone, Unplug, Upload, Wifi } from 'lucide-react';
+import type { AppState, WifiReceiverView } from '../../shared/types';
+import { emptyPhoneSync, PHONE_SYNC, phoneCalendarLabel, phoneConnection } from '../../shared/phone';
+import { api, errorMessage, isDesktop } from '../api';
 
 export function PhoneSettings({ state }: { state: AppState }) {
   const view = state.phoneSync ?? emptyPhoneSync();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
-  const command = async (action: 'connect' | 'refresh' | 'disconnect' | 'calendar', id?: string) => {
-    setBusy(true); setError('');
-    try { const result = await api.phoneSyncControl(action, id); if (result.error) setError(result.error); }
+  const revision = useRef(0);
+  const connection = phoneConnection(view);
+  const disabled = !!busy || !isDesktop;
+  const [wifi, setWifi] = useState<WifiReceiverView>({ running: false, discoveryAvailable: false, discoveryPort: 0, pairingUntil: 0, requests: [], error: null });
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = setTimeout(() => setFeedback(''), 3000);
+    return () => clearTimeout(timer);
+  }, [feedback]);
+  useEffect(() => {
+    if (!isDesktop) return;
+    let active = true, pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      const before = revision.current;
+      try { const next = await api.wifiReceiverControl('status'); if (active && before === revision.current) setWifi(next); }
+      catch { /* Connection actions report errors explicitly. */ }
+      finally { pending = false; }
+    };
+    void refresh(); const timer = setInterval(() => void refresh(), 2000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
+  const pairing = async (action: 'pair' | 'approve' | 'reject', id?: string) => {
+    setBusy(action); setError(''); setFeedback('');
+    try { const next = await api.wifiReceiverControl(action, id); revision.current++; setWifi(next); }
     catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   };
-  return <section className="settings-card phone-settings">
-    <div className="settings-section-title"><Smartphone size={19} /><h2>手机日历同步</h2></div>
-    <p className="settings-description">电脑运行 CalendarBridge 接收服务，手机导入配对文件并同步一次。在这里选择接收服务生成的 <code>wallnote-connection.json</code>。</p>
-    <div className={`phone-connection-status ${view.connected ? 'connected' : ''}`}><i /><div><strong>{view.connected ? '接收服务已连接' : view.configured ? '接收服务未连接' : '尚未连接'}</strong><span>{view.device || '等待手机首次同步'}{view.device ? ` · ${view.phoneOnline ? '手机在线' : '手机离线'}` : ''}</span></div></div>
-    {view.lastSync && <p className="settings-description">最近快照：{new Date(view.lastSync).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）</p>}
-    <label className="phone-calendar-select">本地日程写入的手机日历<select aria-label="手机写入日历" disabled={busy || !view.connected} value={view.calendarId ?? ''} onChange={event => { if (event.target.value) void command('calendar', event.target.value); }}><option value="">请选择可写日历</option>{view.calendars.map(calendar => <option key={calendar.id} value={calendar.id} disabled={!calendar.writable}>{calendar.name}{calendar.writable ? '' : '（只读）'}</option>)}</select></label>
+  const command = async (action: 'connect' | 'refresh' | 'disconnect' | 'calendar', id?: string) => {
+    setBusy(action); setError(''); setFeedback('');
+    try {
+      const result = await api.phoneSyncControl(action, id);
+      if (result.error) setError(result.error);
+      else if (action === 'refresh') setFeedback('连接状态已刷新。');
+    }
+    catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(''); }
+  };
+  const known = !!(view.device || view.lastSync);
+  const labels = view.calendars.map(calendar => phoneCalendarLabel(calendar.name));
+  const counts = new Map<string, number>();
+  for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return <section id="phone-sync" tabIndex={-1} aria-labelledby="phone-sync-heading" className="settings-card phone-settings">
+    <div className="settings-section-title"><Smartphone size={19} /><h2 id="phone-sync-heading">{PHONE_SYNC}</h2></div>
+    <div className="phone-connection-status" data-tone={isDesktop ? connection.tone : 'idle'} role="status"><i /><div><strong>{isDesktop ? connection.label : '浏览器预览'}</strong><span>{isDesktop ? connection.detail : '请在 Windows 桌面版中配对手机。'}</span>
+      {view.lastSync && <span>最近同步：{new Date(view.lastSync).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）</span>}</div></div>
+    <div className="settings-buttons"><button className={`button ${known ? '' : 'primary'}`} disabled={disabled} onClick={() => void pairing('pair')}><Wifi size={15} />配对手机</button>
+      {view.configured && <button className={`button ${known ? 'primary' : ''}`} disabled={disabled} onClick={() => void command('refresh')}><RefreshCw size={15} className={busy === 'refresh' ? 'spin' : ''} />{busy === 'refresh' ? '正在刷新…' : view.connected ? '刷新状态' : '重试连接'}</button>}</div>
+    {feedback && <p className="phone-action-feedback" role="status">{feedback}</p>}
+    <p className="settings-description">手机和电脑连接同一 Wi-Fi。在这里点击“配对手机”，再用手机日历助手搜索电脑。首次核对验证码，之后自动重连。</p>
+    {wifi.pairingUntil > Date.now() / 1000 && <p className="settings-description">等待手机连接…配对窗口有效期为 2 分钟。</p>}
+    {wifi.requests.map(request => <div className="phone-pair-request" key={request.id}><strong>{request.device}</strong><p>核对手机显示的验证码</p><div className="phone-pair-code">{request.code}</div><div className="settings-buttons"><button className="button primary" disabled={disabled} onClick={() => void pairing('approve', request.id)}>验证码一致，允许配对</button><button className="button" disabled={disabled} onClick={() => void pairing('reject', request.id)}>拒绝</button></div></div>)}
+    {wifi.error && <p className="form-error" role="alert">{wifi.error}</p>}
+    <label className="phone-calendar-select">本地日程写入的手机日历<select aria-label="手机写入日历" disabled={disabled || !view.connected} value={view.calendarId ?? ''} onChange={event => { if (event.target.value) void command('calendar', event.target.value); }}><option value="">请选择可写日历</option>{view.calendars.map((calendar, i) => <option key={calendar.id} value={calendar.id} disabled={!calendar.writable}>{labels[i]}{counts.get(labels[i])! > 1 ? ` · #${calendar.id}` : ''}{calendar.writable ? '' : '（只读）'}</option>)}</select></label>
     <p className="settings-description">手机日程按北京时间显示。打开本地日程可“发送到手机”；手机开启电脑编辑后才会执行。重复、全天及跨天日程在 WallNote 中只读，不支持删除手机日程。</p>
     {view.configured && <div className="phone-permission-status"><span>{view.canWrite ? '手机已允许电脑编辑' : '手机尚未允许电脑编辑'}</span><span>{view.pending} 项操作待确认</span></div>}
-    {(error || view.error) && <p className="form-error" role="alert">{error || view.error}</p>}
-    <div className="settings-buttons"><button className="button" disabled={busy} onClick={() => void command('connect')}><Upload size={15} />{view.configured ? '更换连接配置' : '连接接收服务'}</button>{view.configured && <><button className="button" disabled={busy} onClick={() => void command('refresh')}><RefreshCw size={15} />刷新</button><button className="button" disabled={busy} onClick={() => void command('disconnect')}><Unplug size={15} />断开</button></>}</div>
+    {error && error !== view.error && <p className="form-error" role="alert">{error}</p>}
+    <details className="phone-advanced"><summary>高级：连接独立接收服务</summary><p className="settings-description">已有独立 CalendarBridge 服务时，可导入其电脑连接配置。</p><div className="settings-buttons"><button className="button" disabled={disabled} onClick={() => void command('connect')}><Upload size={15} />{view.configured ? '更换连接配置' : '连接接收服务'}</button>{view.configured && <button className="button" disabled={disabled} onClick={() => void command('disconnect')}><Unplug size={15} />断开</button>}</div></details>
   </section>;
 }

@@ -1,0 +1,10 @@
+*
+!.gitignore
+!server.py
+!pairing.py
+!discovery.py
+!command_store.py
+!setup_receiver.py
+!requirements-build.txt
+!dev/
+!dev/build_receiver.py

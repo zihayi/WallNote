@@ -1,5 +1,5 @@
 import { _electron as electron, expect } from '@playwright/test';
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { configureEnvironment } from './environment.mjs';
 
@@ -17,7 +17,8 @@ try {
   await expect.poll(() => app.windows().some(isManager), { timeout: 20000 }).toBe(true);
   const manager = app.windows().find(isManager);
   await expect.poll(() => manager.evaluate(() => window.wallnote?.getDesktopStatus()), { timeout: 30000 }).toMatchObject({ active: true, widgets: 4, error: null });
-  expect(await manager.evaluate(() => window.wallnote.getInfo())).toMatchObject({ version: '0.5.0', desktop: true });
+  const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+  expect(await manager.evaluate(() => window.wallnote.getInfo())).toMatchObject({ version, desktop: true });
   const calendar = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'calendar');
   await expect(calendar.locator('.calendar-grid > button')).toHaveCount(42);
   await expect(calendar.locator('.frost-panel')).toHaveCSS('border-radius', '20px');
@@ -26,5 +27,5 @@ try {
   await expect(calendar.getByRole('button', { name: '编辑日程：打包验证', exact: true })).toBeVisible();
   const schedule = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'schedule');
   await expect(schedule.getByRole('button', { name: '编辑日程：打包验证', exact: true })).toBeVisible();
-  console.log('Packaged v0.5.0 passed: desktop input bridge, four widgets, calendar/schedule synchronization and glass styling.');
+  console.log(`Packaged v${version} passed: desktop input bridge, four widgets, calendar/schedule synchronization and glass styling.`);
 } finally { await app?.close(); }

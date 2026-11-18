@@ -50,7 +50,7 @@ export function PlannerWorkspace({ state, standalone = false }: { state: AppStat
   const wallpaper = wallpapers.find(w => w.id === (standalone ? state.appliedWallpaperId ?? state.selectedWallpaperId : state.selectedWallpaperId)) ?? wallpapers[0];
   const note = activeDesktopNote(state);
   return <div className={`planner-workspace ${standalone ? 'standalone-workspace' : ''}`} style={{ backgroundImage: `url("${wallpaperURL(wallpaper)}")` }}>
-    <div className="planner-workspace-grid"><HourlySchedule state={state} /><CalendarPanel state={state} /><div className="workspace-right"><DesktopTasks state={state} />{note ? <FloatingNote key={note.id} note={note} state={state} desktop={false} /> : <EmptyNotesPanel state={state} />}</div></div>
+    <div className="planner-workspace-grid"><HourlySchedule state={state} /><CalendarPanel state={state} showPhoneLink={!standalone} /><div className="workspace-right"><DesktopTasks state={state} />{note ? <FloatingNote key={note.id} note={note} state={state} desktop={false} /> : <EmptyNotesPanel state={state} />}</div></div>
     {standalone && <div className="workspace-watermark">WallNote</div>}
   </div>;
 }

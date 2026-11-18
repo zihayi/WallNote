@@ -42,7 +42,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.5.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false }),
+  getInfo: async () => ({ version: '0.6.2', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -53,7 +53,11 @@ const previewAPI: WallNoteAPI = {
     return true;
   },
   restoreBackup: async () => { throw new Error('请在桌面版中恢复 JSON 备份。'); },
-  phoneSyncControl: async () => { throw new Error('手机日历同步需要 Windows 桌面版。'); },
+  phoneSyncControl: async () => { throw new Error('手机同步需要 Windows 桌面版。'); },
+  wifiReceiverControl: async command => {
+    if (command === 'status') return { running: false, discoveryAvailable: false, discoveryPort: 0, pairingUntil: 0, requests: [], error: null };
+    throw new Error('Wi-Fi 自动配对需要 Windows 桌面版。');
+  },
   sendEventToPhone: async () => { throw new Error('请在桌面版中连接 CalendarBridge。'); },
   getDesktopStatus: async () => ({ enabled: false, active: false, displays: 0, widgets: 0, error: null }),
   desktopControl: async () => { throw new Error('请启动 Windows 桌面版，将 WallNote 直接铺到电脑桌面。'); },

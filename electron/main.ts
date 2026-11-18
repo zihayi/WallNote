@@ -13,10 +13,14 @@ import { parsePhoneProfile } from './phone-client';
 import { WallpaperCache } from './wallpaper-cache';
 import { stateForView } from '../shared/renderer-state';
 import { dateKey } from '../shared/calendar';
+import { WifiReceiver } from './wifi-receiver';
+import { ManagerMotion } from './window-motion';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
 app.setName('WallNote');
+const supportsLaunchAtLogin = process.platform === 'win32' && app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE;
+if (process.platform === 'win32') app.setAppUserModelId('com.wallnote.desktop');
 // Static wallpapers and pre-blurred widgets do not need a GPU raster cache per window.
 // Keep an explicit escape hatch for machines with unusual software-compositor behavior.
 if (process.env.WALLNOTE_HARDWARE_RENDERING !== '1') app.disableHardwareAcceleration();
@@ -34,6 +38,8 @@ const assetDir = devURL ? path.join(__dirname, '..', 'public') : rendererDir;
 const store = new StateStore(app.getPath('userData'));
 const imageDir = path.join(store.directory, 'wallpapers');
 let mainWindow: BrowserWindow | null = null;
+let managerMotion: ManagerMotion | null = null;
+let managerLoaded: Promise<void> = Promise.resolve();
 let managerIdleTimer: ReturnType<typeof setTimeout> | null = null;
 let rendererDayTimer: ReturnType<typeof setInterval> | null = null;
 let tray: Tray | null = null;
@@ -53,6 +59,10 @@ const phoneSync = new PhoneSyncController(store.directory, () => store.state, tr
   const next = transform(store.state);
   if (JSON.stringify(next) !== JSON.stringify(store.state)) { await store.save(next); broadcast(); }
 }));
+const receiverExecutable = app.isPackaged ? path.join(process.resourcesPath, 'native', 'CalendarBridge.Receiver.exe') : process.env.CALENDAR_PYTHON || 'python';
+const receiverArgs = app.isPackaged ? [] : ['-u', path.resolve(process.env.CALENDAR_BRIDGE_ROOT || path.join(__dirname, '..', 'receiver'), 'server.py')];
+if (process.env.WALLNOTE_DATA_DIR && process.env.WALLNOTE_WIFI_TEST_LOOPBACK === '1') receiverArgs.push('--host', '127.0.0.1', '--discovery-port', '0');
+const wifiReceiver = new WifiReceiver(store.directory, receiverExecutable, receiverArgs, profile => phoneSync.connect(profile));
 
 function serial<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work);
@@ -95,11 +105,9 @@ function createMainWindow(show = false): void {
   secureWindow(mainWindow);
   const window = mainWindow;
   window.on('show', () => { if (!window.isDestroyed()) window.webContents.send('state:changed', store.state); });
-  mainWindow.once('ready-to-show', () => { if (show && !window.isDestroyed()) { window.show(); window.focus(); } });
-  mainWindow.on('close', event => {
-    if (flushed) return;
-    event.preventDefault(); window.hide();
+  const motion = managerMotion = new ManagerMotion(window, show, () => {
     if (managerIdleTimer) clearTimeout(managerIdleTimer);
+    if (quitting) return;
     managerIdleTimer = setTimeout(() => {
       // Keep open forms and unfinished task input; release only an idle management page.
       if (window.isDestroyed() || window.isVisible()) return;
@@ -108,15 +116,18 @@ function createMainWindow(show = false): void {
       }).catch(() => undefined);
     }, 30000);
   });
-  mainWindow.on('closed', () => { mainWindow = null; });
-  void loadWindow(mainWindow);
+  window.on('close', event => {
+    if (flushed) return;
+    event.preventDefault(); if (!quitting) void motion.hide();
+  });
+  window.on('closed', () => { if (mainWindow === window) { mainWindow = null; managerMotion = null; } });
+  managerLoaded = loadWindow(window);
 }
 
 function showManager() {
   if (managerIdleTimer) clearTimeout(managerIdleTimer);
   if (!mainWindow || mainWindow.isDestroyed()) { createMainWindow(true); return; }
-  if (mainWindow?.isMinimized()) mainWindow.restore();
-  mainWindow?.show(); mainWindow?.focus();
+  managerMotion?.show();
 }
 
 function updateTray() {
@@ -144,7 +155,14 @@ function updateTray() {
 async function controlDesktop(command: DesktopCommand) {
   if (command === 'quit') { setImmediate(() => app.quit()); return desktop.getStatus(); }
   if (command === 'showManager') { showManager(); return desktop.getStatus(); }
-  if (command === 'showDesktop') { mainWindow?.hide(); await desktop.native('show-desktop'); return desktop.getStatus(); }
+  if (command === 'showPhoneSync') {
+    showManager();
+    const window = mainWindow;
+    await managerLoaded;
+    if (window && !window.isDestroyed()) await window.webContents.executeJavaScript("location.hash = 'phone-sync'; void 0");
+    return desktop.getStatus();
+  }
+  if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
       await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined } });
@@ -219,8 +237,8 @@ function installIPC(): void {
       if ((input.type === 'note:add' && input.note.pinned) || (input.type === 'note:update' && input.changes.pinned === true)) next = { ...next, settings: { ...next.settings, showDesktopNotes: true } };
       if (!isValidState(next)) throw new Error('内容超出限制或数据无效，未保存更改。');
       if (input.type === 'settings:update' && input.changes.launchAtLogin !== undefined) {
-        if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) throw new Error('开发版与便携版不支持开机启动，请使用固定位置的安装版。');
-        app.setLoginItemSettings({ openAtLogin: input.changes.launchAtLogin });
+        if (!supportsLaunchAtLogin) throw new Error('请在 Windows 安装版中设置登录时启动。');
+        app.setLoginItemSettings({ openAtLogin: input.changes.launchAtLogin, name: 'WallNote', path: process.execPath });
       }
       await store.save(next);
       if (input.type === 'wallpaper:delete') {
@@ -275,19 +293,27 @@ function installIPC(): void {
       return store.state;
     });
   });
-  ipcMain.handle('app:info', event => { trusted(event); return { version: app.getVersion(), platform: process.platform, dataPath: store.directory, desktop: true }; });
+  ipcMain.handle('app:info', event => { trusted(event); return { version: app.getVersion(), platform: process.platform, dataPath: store.directory, desktop: true, supportsLaunchAtLogin }; });
   ipcMain.handle('phone:control', async (event, command: string, calendarId?: string) => {
     trusted(event, true);
     if (command === 'connect') {
       const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择 CalendarBridge 的电脑连接配置', filters: [{ name: '电脑连接配置', extensions: ['json'] }], properties: ['openFile'] });
       if (selected.canceled) return phoneSync.getStatus();
       if ((await fs.stat(selected.filePaths[0])).size > 32768) throw new Error('连接配置文件过大。');
-      return phoneSync.connect(parsePhoneProfile(await fs.readFile(selected.filePaths[0], 'utf8')));
+      const profile = parsePhoneProfile(await fs.readFile(selected.filePaths[0], 'utf8'));
+      const result = await phoneSync.connect(profile);
+      if (!wifiReceiver.owns(profile)) await wifiReceiver.stop(true);
+      return result;
     }
     if (command === 'refresh') return phoneSync.refresh();
-    if (command === 'disconnect') return phoneSync.disconnect();
+    if (command === 'disconnect') { const result = await phoneSync.disconnect(); await wifiReceiver.stop(true); return result; }
     if (command === 'calendar' && typeof calendarId === 'string') return phoneSync.chooseCalendar(calendarId);
     throw new Error('未知手机同步操作。');
+  });
+  ipcMain.handle('wifi:control', async (event, command: string, id?: string) => {
+    trusted(event, true);
+    if (!['status', 'pair', 'approve', 'reject'].includes(command)) throw new Error('未知 Wi-Fi 配对操作。');
+    return wifiReceiver.control(command as 'status' | 'pair' | 'approve' | 'reject', id);
   });
   ipcMain.handle('phone:send', (event, id: string, expectedRevision?: string) => {
     trusted(event);
@@ -310,8 +336,8 @@ function installIPC(): void {
   ipcMain.on('desktop:manipulate-stop', event => { if (event.senderFrame === event.sender.mainFrame) desktop.finishManipulation(event.sender); });
   ipcMain.handle('desktop:control', (event, command: DesktopCommand) => {
     trusted(event);
-    if (!['enable', 'disable', 'showManager', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');
-    if (mainWindow?.webContents !== event.sender && command !== 'showManager') throw new Error('请通过管理面板执行此操作。');
+    if (!['enable', 'disable', 'showManager', 'showPhoneSync', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');
+    if (mainWindow?.webContents !== event.sender && command !== 'showManager' && !(command === 'showPhoneSync' && desktop.identify(event.sender)?.kind === 'calendar')) throw new Error('请通过管理面板执行此操作。');
     return controlDesktop(command);
   });
   ipcMain.handle('app:dataFolder', async event => { trusted(event, true); const error = await shell.openPath(store.directory); if (error) throw new Error(error); });
@@ -371,6 +397,7 @@ if (hasLock) {
     });
     await phoneSync.start();
     installIPC();
+    if (!process.env.WALLNOTE_DATA_DIR || process.env.WALLNOTE_ENABLE_WIFI_RECEIVER === '1') void wifiReceiver.autoStart(phoneSync.getStatus().configured);
     let renderedDay = dateKey();
     rendererDayTimer = setInterval(() => { const day = dateKey(); if (day !== renderedDay) { renderedDay = day; broadcast(); } }, 30000);
     rendererDayTimer.unref();
@@ -395,6 +422,7 @@ if (hasLock) {
     if (rendererDayTimer) clearInterval(rendererDayTimer);
     void (async () => {
       try {
+        await wifiReceiver.stop();
         await phoneSync.stop();
         const positions = await desktop.positions();
         await serial(async () => {

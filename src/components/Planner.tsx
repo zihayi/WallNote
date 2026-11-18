@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus, Send, Smartphone, Trash2 } from 'lucide-react';
 import type { Action, AppState, PhoneSyncItem, ScheduleEvent } from '../../shared/types';
 import { calendarEvents, createEvent, dateKey, eventError, eventsOnDate, monthDays, parseDate, selectedDate, shiftDate, validDate } from '../../shared/calendar';
-import { emptyPhoneSync } from '../../shared/phone';
+import { emptyPhoneSync, PHONE_SYNC } from '../../shared/phone';
 import { api, errorMessage } from '../api';
 import { ColorPicker } from './Notes';
 import { Modal } from './Modal';
 import { FrostedPanel } from './FrostedPanel';
+import { PhoneSyncEntry } from './PhoneSyncEntry';
 
 type RunAction = (action: Action) => Promise<boolean>;
 function useActions() {
@@ -15,7 +16,7 @@ function useActions() {
     try { await api.dispatch(action); setError(''); return true; }
     catch (cause) { setError(errorMessage(cause)); return false; }
   };
-  return { error, run };
+  return { error, setError, run };
 }
 
 export function EventEditor({ event, existing, state, onSave, onClose }: { event: ScheduleEvent; existing: boolean; state: AppState; onSave: RunAction; onClose: () => void }) {
@@ -61,7 +62,7 @@ export function EventEditor({ event, existing, state, onSave, onClose }: { event
   };
   return <Modal title={readOnly ? '查看手机日程' : persisted ? '编辑日程' : '新建日程'} onClose={close} className="event-editor-modal">
     <form className="event-editor-form" onSubmit={e => { e.preventDefault(); void save(); }}>
-      {(event.phone || sync) && <div className="event-phone-info"><Smartphone size={14} /><span>{event.phone ? `${event.phone.calendarName} · 北京时间${event.phone.location ? ` · ${event.phone.location}` : ''}` : '已关联手机日历'}{event.phone?.reason ? ` · ${event.phone.reason}` : ''}{sync ? ` · ${sync.message}` : ''}</span></div>}
+      {(event.phone || sync) && <div className="event-phone-info"><Smartphone size={14} /><span>{event.phone ? `${PHONE_SYNC} · 北京时间${event.phone.location ? ` · ${event.phone.location}` : ''}` : '已关联手机日历'}{event.phone?.reason ? ` · ${event.phone.reason}` : ''}{sync ? ` · ${sync.message}` : ''}</span></div>}
       <label>标题<input data-autofocus aria-label="日程标题" disabled={readOnly || busy} maxLength={120} placeholder="例如：项目会议" value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
       <label>日期<input type="date" aria-label="日程日期" disabled={readOnly || busy} min="1900-01-01" max="2100-12-31" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label>
       <div className="event-time-inputs"><label>开始时间<input type={readOnly ? 'text' : 'time'} disabled={readOnly || busy} aria-label="开始时间" value={draft.start} onChange={e => setDraft({ ...draft, start: e.target.value })} /></label><span>—</span><label>结束时间<input type={readOnly ? 'text' : 'time'} disabled={readOnly || busy} aria-label="结束时间" value={draft.end} onChange={e => setDraft({ ...draft, end: e.target.value })} /></label></div>
@@ -79,15 +80,15 @@ export function EventEditor({ event, existing, state, onSave, onClose }: { event
 }
 
 function EventButton({ event, onClick, sync }: { event: ScheduleEvent; onClick: () => void; sync?: PhoneSyncItem }) {
-  return <button className={`schedule-event ${event.color}`} aria-label={`${event.phone?.readOnly ? '查看日程' : '编辑日程'}：${event.title}`} onClick={onClick}><span className="schedule-event-time">{event.start}–{event.end}</span><strong>{event.title}</strong>{event.description && <span className="schedule-event-description">{event.description}</span>}{(event.phone || sync) && <span className="event-source-line"><Smartphone size={11} />{sync?.message || event.phone?.calendarName}{event.phone?.readOnly ? ' · 只读' : ''}</span>}</button>;
+  return <button className={`schedule-event ${event.color}`} aria-label={`${event.phone?.readOnly ? '查看日程' : '编辑日程'}：${event.title}`} onClick={onClick}><span className="schedule-event-time">{event.start}–{event.end}</span><strong>{event.title}</strong>{event.description && <span className="schedule-event-description">{event.description}</span>}{(event.phone || sync) && <span className="event-source-line"><Smartphone size={11} />{PHONE_SYNC}{sync?.message ? ` · ${sync.message}` : ''}{event.phone?.readOnly ? ' · 只读' : ''}</span>}</button>;
 }
 
-export function CalendarPanel({ state, desktop = false }: { state: AppState; desktop?: boolean }) {
+export function CalendarPanel({ state, desktop = false, showPhoneLink = true }: { state: AppState; desktop?: boolean; showPhoneLink?: boolean }) {
   const date = selectedDate(state);
   const [month, setMonth] = useState(date.slice(0, 7));
   const [now, setNow] = useState(new Date());
   const [editor, setEditor] = useState<{ event: ScheduleEvent; existing: boolean } | null>(null);
-  const { error, run } = useActions();
+  const { error, run, setError } = useActions();
   useEffect(() => setMonth(date.slice(0, 7)), [date]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
   const days = useMemo(() => monthDays(month), [month]);
@@ -99,7 +100,8 @@ export function CalendarPanel({ state, desktop = false }: { state: AppState; des
   }, [state.events, state.phoneEvents]);
   const changeMonth = (delta: number) => { const next = parseDate(`${month}-01`); next.setMonth(next.getMonth() + delta); const key = dateKey(next); if (validDate(key)) setMonth(key.slice(0, 7)); };
   const choose = async (key: string) => { if (await run({ type: 'calendar:select', date: key })) setMonth(key.slice(0, 7)); };
-  return <FrostedPanel state={state} title="日历" widgetKey="calendar" icon={<CalendarDays size={18} />} desktop={desktop} className="calendar-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopCalendar: false } }) : undefined}>
+  return <FrostedPanel state={state} title="日历" widgetKey="calendar" icon={<CalendarDays size={18} />} desktop={desktop} className="calendar-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopCalendar: false } }) : undefined}
+    actions={showPhoneLink && <PhoneSyncEntry view={state.phoneSync} widget={desktop} onError={setError} />}>
     <div className="calendar-clock"><time>{now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</time><span>{now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</span></div>
     <div className="calendar-toolbar"><h3>{Number(month.slice(0, 4))} 年 {Number(month.slice(5))} 月</h3><div><button className="calendar-today" onClick={() => void choose(dateKey())}>今天</button><button className="icon-button" aria-label="上个月" disabled={month === '1900-01'} onClick={() => changeMonth(-1)}><ChevronLeft size={17} /></button><button className="icon-button" aria-label="下个月" disabled={month === '2100-12'} onClick={() => changeMonth(1)}><ChevronRight size={17} /></button></div></div>
     <div className="calendar-weekdays">{['一', '二', '三', '四', '五', '六', '日'].map(day => <span key={day}>{day}</span>)}</div>

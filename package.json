@@ -1,9 +1,11 @@
 {
   "name": "wallnote",
-  "version": "0.5.0",
+  "version": "0.6.2",
   "private": true,
   "description": "Windows 桌面壁纸、日历、时间安排、便签与待办清单。",
   "author": "WallNote",
+  "homepage": "https://github.com/zihayi/WallNote",
+  "repository": { "type": "git", "url": "https://github.com/zihayi/WallNote.git" },
   "license": "UNLICENSED",
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -46,8 +48,22 @@
     "directories": { "output": "release" },
     "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
     "asar": true,
-    "extraResources": [{ "from": "dist-native", "to": "native", "filter": ["*.exe"] }],
-    "win": { "target": "portable", "icon": "public/icon.png", "signExecutable": false },
-    "portable": { "artifactName": "WallNote-${version}-portable.exe" }
+    "extraResources": [{ "from": "dist-native", "to": "native", "filter": ["WallNote.DesktopHost.exe", "CalendarBridge.Receiver.exe"] }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "native/WallNote.ico", "signExecutable": false },
+    "nsis": {
+      "artifactName": "WallNote-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "selectPerMachineByDefault": false,
+      "allowToChangeInstallationDirectory": true,
+      "createStartMenuShortcut": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "WallNote",
+      "uninstallDisplayName": "WallNote",
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": false,
+      "installerLanguages": ["zh_CN", "en_US"],
+      "include": "native/installer.nsh"
+    }
   }
 }

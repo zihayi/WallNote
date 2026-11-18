@@ -6,6 +6,7 @@ import { createEvent } from '../shared/calendar';
 import { PhoneSyncController } from '../electron/phone-sync';
 import { phoneEvents, revision, type PhoneSnapshot, type ProviderRow } from '../electron/phone-adapter';
 import { parsePhoneProfile, type PhoneProfile } from '../electron/phone-client';
+import { emptyPhoneSync, phoneCalendarLabel, phoneConnection } from '../shared/phone';
 
 const controllers: PhoneSyncController[] = [];
 const directories: string[] = [];
@@ -63,6 +64,15 @@ async function fixture() {
 }
 
 describe('Android calendar adapter', () => {
+  it('distinguishes a running receiver from a live phone, including a stale heartbeat on connection loss', () => {
+    const idle = emptyPhoneSync();
+    const ready = { ...idle, configured: true, connected: true };
+    const known = { ...ready, device: 'Mock Android' };
+    expect([idle, ready, known, { ...known, phoneOnline: true }].map(v => phoneConnection(v).label)).toEqual(['未连接', '等待手机', '手机离线', '手机在线']);
+    expect(phoneConnection({ ...known, connected: false, phoneOnline: true }).tone).not.toBe('online');
+    expect(phoneConnection({ ...known, error: '连接失败', phoneOnline: true }).tone).toBe('error');
+    expect(['Local account', ' LOCAL_ACCOUNT ', '本地账户', '家庭日历'].map(phoneCalendarLabel)).toEqual(['手机同步', '手机同步', '手机同步', '家庭日历']);
+  });
   it('uses Beijing times and marks complex or null-permission events read-only', () => {
     const snapshot = sample();
     expect(phoneEvents(snapshot)[0]).toMatchObject({ date: '2028-02-29', start: '09:00', end: '10:00', phone: { readOnly: false } });

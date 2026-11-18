@@ -10,6 +10,7 @@ import { TaskInput, TaskRow } from './components/Tasks';
 import { DesktopTasks, DesktopWallpaper, EmptyNotesPanel, PlannerWorkspace } from './components/Desktop';
 import { CalendarPanel, HourlySchedule } from './components/Planner';
 import { PhoneSettings } from './components/PhoneSettings';
+import { PhoneSyncEntry, usePhoneSyncLink } from './components/PhoneSyncEntry';
 
 const navigation: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
@@ -27,8 +28,8 @@ function Empty({ icon, title, description, children }: { icon: ReactNode; title:
   return <div className="empty-state"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{description}</p>{children}</div>;
 }
 
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return <button role="switch" aria-checked={checked} aria-label={label} onClick={onChange} className={`switch ${checked ? 'checked' : ''}`}><span /></button>;
+function Switch({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
+  return <button role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={onChange} className={`switch ${checked ? 'checked' : ''}`}><span /></button>;
 }
 
 export default function App() {
@@ -54,6 +55,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return params.has('wallpaper') ? 'wallpaper' : params.has('workspace') ? 'workspace' : params.get('widget');
   }, []);
+  usePhoneSyncLink(!floatingId && !desktopView, !!state, page, setPage);
 
   useEffect(() => {
     document.documentElement.dataset.view = floatingId || (desktopView && !['workspace', 'wallpaper'].includes(desktopView)) ? 'widget' : desktopView ?? 'manager';
@@ -158,7 +160,7 @@ export default function App() {
     </aside>
 
     <div className="workspace">
-      <header className="topbar"><div className="breadcrumb"><span>WallNote</span><ChevronRight size={13} /><strong>{currentLabel}</strong></div><div className="topbar-actions"><button className="search-trigger" onClick={() => { setQuery(''); setSearchOpen(true); }} aria-label="搜索内容"><Search size={16} /><span>搜索</span><kbd>Ctrl K</kbd></button><span className="topbar-divider" /><span className="mode-label"><span />{isDesktop ? '本地模式' : '浏览器预览'}</span><button className="avatar" aria-label="打开偏好设置" onClick={() => setPage('settings')}>W</button></div>{isDesktop && <div className="window-controls"><button aria-label="最小化窗口" onClick={() => api.windowAction('minimize')}><Minus size={15} /></button><button aria-label="最大化或还原窗口" onClick={() => api.windowAction('maximize')}><Maximize2 size={13} /></button><button className="window-close" aria-label="关闭管理面板" onClick={() => api.windowAction('close')}><X size={17} /></button></div>}</header>
+      <header className="topbar"><div className="breadcrumb"><span>WallNote</span><ChevronRight size={13} /><strong>{currentLabel}</strong></div><div className="topbar-actions"><button className="search-trigger" onClick={() => { setQuery(''); setSearchOpen(true); }} aria-label="搜索内容"><Search size={16} /><span>搜索</span><kbd>Ctrl K</kbd></button><span className="topbar-divider" /><PhoneSyncEntry view={state.phoneSync} /></div>{isDesktop && <div className="window-controls"><button aria-label="最小化窗口" onClick={() => api.windowAction('minimize')}><Minus size={15} /></button><button aria-label="最大化或还原窗口" onClick={() => api.windowAction('maximize')}><Maximize2 size={13} /></button><button className="window-close" aria-label="关闭管理面板" onClick={() => api.windowAction('close')}><X size={17} /></button></div>}</header>
       <main className={`main-content ${page === 'dashboard' ? 'workspace-content' : ''}`} key={page}>
         {isDesktop && <div className={`desktop-mode-banner ${desktopStatus.error ? 'has-error' : ''}`}><Monitor size={19} /><div><strong>{desktopStatus.active ? '桌面模式已开启' : desktopStatus.enabled ? '正在连接桌面…' : '桌面模式已暂停'}</strong><p>{desktopStatus.error || (desktopStatus.active ? `${desktopStatus.displays} 块屏幕 · ${desktopStatus.widgets} 个桌面组件` : '开启后在 Windows 桌面显示日历、时间安排、待办和便签。')}</p></div><button className="button small" disabled={!!busy} onClick={() => void desktopCommand(desktopStatus.active ? 'showDesktop' : 'enable')}>{desktopStatus.active ? '查看桌面' : '开启桌面模式'}<ArrowRight size={14} /></button></div>}
 
@@ -191,7 +193,7 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>桌面组件、外观与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.5.0'}</span></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.6.2'}</span></div>
           <div className="settings-layout"><div><PhoneSettings state={state} /><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
             <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方；点击组件图钉后置顶，可移动和缩放</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
             {([
@@ -201,7 +203,7 @@ export default function App() {
               ['showDesktopNotes', '显示桌面便签', '右侧显示已贴出的便签'],
               ['glassEnabled', '毛玻璃背景', '为各组件添加圆角、半透明和模糊背景'],
             ] as const).map(([key, label, description]) => <div className="setting-row" key={key}><div><h3>{label}</h3><p>{description}</p></div><Switch label={label} checked={state.settings[key] !== false} onChange={() => void run({ type: 'settings:update', changes: { [key]: state.settings[key] === false } })} /></div>)}
-            <div className="setting-row"><div><h3>开机启动</h3><p>开发版与单文件便携版不支持</p></div><Switch label="开机启动" checked={state.settings.launchAtLogin} onChange={() => void run({ type: 'settings:update', changes: { launchAtLogin: !state.settings.launchAtLogin } })} /></div>
+            <div className="setting-row"><div><h3>开机启动</h3><p>{info?.supportsLaunchAtLogin ? '登录 Windows 后自动启动 WallNote' : '使用 Windows 安装版可开启'}</p></div><Switch label="开机启动" disabled={!info?.supportsLaunchAtLogin} checked={!!info?.supportsLaunchAtLogin && state.settings.launchAtLogin} onChange={() => void run({ type: 'settings:update', changes: { launchAtLogin: !state.settings.launchAtLogin } })} /></div>
             <div className="settings-buttons desktop-setting-actions"><button className="button" disabled={!!busy} onClick={() => void desktopCommand('resetLayout')}>重置桌面组件位置</button><button className="button" disabled={!!busy} onClick={() => void desktopCommand('quit')}>退出 WallNote</button></div>
           </section><section className="settings-card"><div className="settings-section-title"><ShieldCheck size={19} /><h2>本地数据</h2></div><div className="data-summary"><span><CalendarDays size={17} /><strong>{state.events?.length ?? 0}</strong> 条日程</span><span><StickyNote size={17} /><strong>{state.notes.length}</strong> 张便签</span><span><CheckCircle2 size={17} /><strong>{state.tasks.length}</strong> 条待办</span></div><div className="data-path"><span>数据保存位置</span><code>{info?.dataPath ?? '读取中…'}</code><button className="icon-button" aria-label="打开数据文件夹" onClick={() => void api.openDataFolder().catch(error => notify(errorMessage(error), true))}><FolderOpen size={19} /></button></div><p className="settings-description">JSON 备份包含日程、便签和待办。图片需通过数据文件夹单独备份；恢复旧版备份时会保留当前日程。</p><div className="settings-buttons"><button className="button" disabled={!!busy} onClick={() => void backup(false)}><ArrowDownToLine size={16} />导出备份</button><button className="button" disabled={!!busy} onClick={() => void backup(true)}><ArrowUpFromLine size={16} />恢复备份</button></div></section></div>
           <aside className="about-card"><Brand small /><p>Windows 桌面日程管理</p><Monitor className="about-monitor" size={70} strokeWidth={1} /><div className="offline-badge"><CloudOff size={14} />离线使用 · 本地存储</div><div className="settings-help"><CircleHelp size={15} /><span>关闭管理面板后继续在托盘运行。双击托盘图标或按 Ctrl + Alt + W 打开管理面板。</span></div></aside></div>

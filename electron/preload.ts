@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { WallNoteAPI } from '../shared/types';
 
+// The native host has positioned the real HWND, including its DPI correction.
+ipcRenderer.on('widget:reveal', () => { document.documentElement.dataset.widgetMotion = 'visible'; });
+
 const api: WallNoteAPI = {
   getState: () => ipcRenderer.invoke('state:get'),
   dispatch: action => ipcRenderer.invoke('state:dispatch', action),
@@ -16,6 +19,7 @@ const api: WallNoteAPI = {
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   restoreBackup: () => ipcRenderer.invoke('backup:restore'),
   phoneSyncControl: (command, calendarId) => ipcRenderer.invoke('phone:control', command, calendarId),
+  wifiReceiverControl: (command, id) => ipcRenderer.invoke('wifi:control', command, id),
   sendEventToPhone: (id, expectedRevision) => ipcRenderer.invoke('phone:send', id, expectedRevision),
   getDesktopStatus: () => ipcRenderer.invoke('desktop:status'),
   getDesktopSurface: () => ipcRenderer.invoke('desktop:surface'),

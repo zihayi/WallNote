@@ -50,6 +50,15 @@ export interface PhoneSyncView {
   items: Record<string, PhoneSyncItem>;
 }
 
+export interface WifiReceiverView {
+  running: boolean;
+  discoveryAvailable: boolean;
+  discoveryPort: number;
+  pairingUntil: number;
+  requests: { id: string; device: string; code: string; expires: number }[];
+  error: string | null;
+}
+
 export interface Wallpaper {
   id: string;
   name: string;
@@ -103,7 +112,7 @@ export type Action =
   | { type: 'wallpaper:delete'; id: string }
   | { type: 'settings:update'; changes: Partial<AppState['settings']> };
 
-export interface AppInfo { version: string; platform: string; dataPath: string; desktop: boolean }
+export interface AppInfo { version: string; platform: string; dataPath: string; desktop: boolean; supportsLaunchAtLogin: boolean }
 
 export interface DesktopStatus {
   enabled: boolean;
@@ -119,7 +128,7 @@ export interface DesktopSurface {
   topmost: boolean;
 }
 
-export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showDesktop' | 'resetLayout' | 'quit';
+export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showPhoneSync' | 'showDesktop' | 'resetLayout' | 'quit';
 
 export interface WallNoteAPI {
   getState(): Promise<AppState>;
@@ -132,6 +141,7 @@ export interface WallNoteAPI {
   exportBackup(): Promise<boolean>;
   restoreBackup(): Promise<AppState | null>;
   phoneSyncControl(command: 'connect' | 'refresh' | 'disconnect' | 'calendar', calendarId?: string): Promise<PhoneSyncView>;
+  wifiReceiverControl(command: 'status' | 'pair' | 'approve' | 'reject', id?: string): Promise<WifiReceiverView>;
   sendEventToPhone(id: string, expectedRevision?: string): Promise<PhoneSyncView>;
   getDesktopStatus(): Promise<DesktopStatus>;
   desktopControl(command: DesktopCommand): Promise<DesktopStatus>;

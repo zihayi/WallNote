@@ -170,7 +170,7 @@ export class PhoneSyncController {
         items[job.eventKey] = { state: job.state === 'prepared' ? 'queued' : job.state, message: job.message, linked: !!this.data.bindings[job.eventKey] || job.state !== 'failed', revision: items[job.eventKey]?.revision };
       }
       const phoneSync: PhoneSyncView = {
-        configured: !!this.data.profile, connected: this.connected, phoneOnline: !!device && Date.now() / 1000 - Number(device.lastSeen ?? 0) < 90,
+        configured: !!this.data.profile, connected: this.connected, phoneOnline: this.connected && !!device && Date.now() / 1000 - Number(device.lastSeen ?? 0) < 90,
         canWrite: device?.canWrite === true, device: String(device?.device ?? '').slice(0, 200), lastSync: snapshot?.receivedAt ?? null,
         calendarId: this.data.calendarId, calendars: phoneCalendars(snapshot), pending: this.data.jobs.filter(unresolved).length, error: this.failure, items,
       };
