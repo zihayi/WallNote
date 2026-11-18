@@ -13,7 +13,7 @@ const packaged = process.argv.includes('--packaged');
 const helper = path.resolve(packaged ? 'release/win-unpacked/resources/native/WallNote.DesktopHost.exe' : 'dist-native/WallNote.DesktopHost.exe');
 const execute = promisify(execFile);
 async function native(...args) { const result = await execute(helper, args.map(String), { windowsHide: true }); return JSON.parse(result.stdout.replace(/^\uFEFF/, '')); }
-const env = { ...process.env, WALLNOTE_DATA_DIR: profile, WALLNOTE_SHOW_MANAGER: '0' };
+const env = { ...process.env, WALLNOTE_DATA_DIR: profile, WALLNOTE_SHOW_MANAGER: '0', WALLNOTE_CREATE_MANAGER: '1' };
 delete env.VITE_DEV_SERVER_URL;
 let app;
 try {
@@ -51,10 +51,34 @@ try {
   const calendar = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'calendar');
   const schedule = app.windows().find(page => new URL(page.url()).searchParams.get('widget') === 'schedule');
   await expect(calendar.locator('.frost-panel')).toHaveCSS('border-radius', '20px');
+  await expect(calendar.locator('.frost-scene')).toHaveCSS('filter', 'none');
+  await expect(calendar.locator('.native-panel')).toHaveCSS('backdrop-filter', 'none');
+  const blurred = await calendar.evaluate(() => new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight }); image.onerror = () => reject(new Error('Blur cache unavailable')); image.src = 'wallnote://blur/mist'; }));
+  expect(blurred.width).toBeGreaterThan(0);
+  expect(blurred.width).toBeLessThanOrEqual(640);
   expect(await schedule.locator('.hourly-list').evaluate(el => getComputedStyle(el).scrollbarWidth)).toBe('auto');
   expect(await schedule.locator('.hourly-list').evaluate(el => getComputedStyle(el, '::-webkit-scrollbar-button').display)).toBe('none');
-  const corner = await sharp(await calendar.screenshot({ omitBackground: true })).extract({ left: 0, top: 0, width: 24, height: 24 }).ensureAlpha().raw().toBuffer();
-  expect([...corner].filter((value, index) => index % 4 === 3 && value > 0 && value < 255).length).toBeGreaterThan(5);
+  const wallpaper = app.windows().find(page => new URL(page.url()).searchParams.has('wallpaper') && new URL(page.url()).searchParams.get('display') === String(metadata.primary.id));
+  const wallpaperImage = await sharp(await wallpaper.screenshot({ scale: 'css' })).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  async function checkEmbeddedCorners(page) {
+    await expect(page.locator('.native-widget-root')).toHaveClass(/desktop-composite/);
+    await expect(page.locator('.desktop-corner-underlay')).toHaveCount(1);
+    const surface = await page.evaluate(() => window.wallnote.getDesktopSurface());
+    await page.evaluate(async () => { const image = new Image(); image.src = './wallpapers/mist.jpg'; await image.decode(); });
+    const rendered = await sharp(await page.screenshot({ scale: 'css', omitBackground: true })).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const width = rendered.info.width, height = rendered.info.height;
+    for (const [x, y] of [[2, 2], [width - 3, 2], [2, height - 3], [width - 3, height - 3]]) {
+      const sourceX = Math.round((surface.bounds.x - surface.display.x + x) * wallpaperImage.info.width / surface.display.width);
+      const sourceY = Math.round((surface.bounds.y - surface.display.y + y) * wallpaperImage.info.height / surface.display.height);
+      const actual = (y * width + x) * 4;
+      const expected = (sourceY * wallpaperImage.info.width + sourceX) * 4;
+      // WorkerW need not support alpha: exterior pixels already match the real wallpaper.
+      expect(rendered.data[actual + 3]).toBe(255);
+      for (let channel = 0; channel < 3; channel++) expect(Math.abs(rendered.data[actual + channel] - wallpaperImage.data[expected + channel])).toBeLessThanOrEqual(12);
+    }
+  }
+  await checkEmbeddedCorners(calendar);
+  for (const kind of ['schedule', 'tasks', 'notes-empty']) await checkEmbeddedCorners(app.windows().find(page => new URL(page.url()).searchParams.get('widget') === kind));
 
   // Move the test widget outside the visible work area before testing global topmost behavior.
   const p = metadata.primary;
@@ -64,6 +88,11 @@ try {
   await manager.evaluate(() => window.wallnote.dispatch({ type: 'widget:topmost', key: 'calendar', enabled: true }));
   expect((await native('inspect', byKind('calendar').handle)).window).toMatchObject({ parent: '0', child: false, topmost: true });
   await expect(calendar.getByRole('button', { name: '置顶日历', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(calendar.locator('.native-widget-root')).toHaveClass(/floating-composite/);
+  await expect(calendar.locator('.desktop-corner-underlay')).toHaveCount(0);
+  const corner = await sharp(await calendar.screenshot({ omitBackground: true })).extract({ left: 0, top: 0, width: 24, height: 24 }).ensureAlpha().raw().toBuffer();
+  expect(corner[3]).toBe(0);
+  expect([...corner].filter((value, index) => index % 4 === 3 && value > 0 && value < 255).length).toBeGreaterThan(5);
   const compact = await calendar.evaluate(() => {
     const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height }; };
     return { width: innerWidth, height: innerHeight, grid: box('.calendar-grid'), heading: box('.selected-day-heading'), agenda: box('.calendar-agenda'), toolbar: box('.calendar-toolbar') };
@@ -88,8 +117,13 @@ try {
   expect(restored).toMatchObject({ child: true, topmost: false, bounds: bounds.calendar });
   expect((await native('inspect', restored.parent)).window.className).toBe('WorkerW');
   await expect.poll(() => calendar.evaluate(() => window.devicePixelRatio)).toBeCloseTo(p.scaleFactor, 1);
+  await checkEmbeddedCorners(calendar);
+  await manager.evaluate(() => window.wallnote.dispatch({ type: 'settings:update', changes: { glassEnabled: false } }));
+  await expect(calendar.locator('.frost-panel')).toHaveClass(/solid-panel/);
+  await checkEmbeddedCorners(calendar);
+  await manager.evaluate(() => window.wallnote.dispatch({ type: 'settings:update', changes: { glassEnabled: true } }));
   expect((await manager.evaluate(() => window.wallnote.getDesktopStatus())).error).toBeNull();
-  console.log(`Layer/size smoke passed: below-icon parents, explicit topmost, smooth alpha corners, aligned columns, compact calendar, custom scrollbar and mixed-DPI normalization. Profile: ${profile}`);
+  console.log(`Layer/corner smoke passed: wallpaper-matched desktop corners, transparent floating corners, unpin restoration, solid/glass modes, layout and mixed-DPI normalization. Profile: ${profile}`);
 } catch (error) {
   if (app) {
     console.error(await app.windows().find(page => !new URL(page.url()).search)?.evaluate(() => window.wallnote.getDesktopStatus()).catch(() => null));

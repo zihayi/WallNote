@@ -35,7 +35,7 @@ export class DesktopController {
   identify(contents: WebContents): Entry | undefined { return [...this.entries.values()].find(entry => entry.win.webContents === contents); }
   surfaceFor(contents: WebContents): DesktopSurface | null {
     const entry = this.identify(contents);
-    return entry ? { bounds: entry.bounds, display: screen.getDisplayMatching(entry.bounds).bounds } : null;
+    return entry ? { bounds: entry.bounds, display: screen.getDisplayMatching(entry.bounds).bounds, topmost: entry.topmost } : null;
   }
   private publish(error: string | null = null) {
     const entries = [...this.entries.values()].filter(e => e.attached && !e.win.isDestroyed());
@@ -213,7 +213,7 @@ export class DesktopController {
       resizable: !wallpaper, minimizable: false, maximizable: false, fullscreenable: false,
       focusable: !wallpaper, transparent: !wallpaper, backgroundColor: wallpaper ? '#365d50' : '#00000000',
       ...(wallpaper ? {} : { minWidth: this.minimum(kind).width, minHeight: this.minimum(kind).height, maxWidth: 1600, maxHeight: 1600 }),
-      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, partition: `wallnote-${wallpaper ? key : kind}` },
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, partition: process.env.VITE_DEV_SERVER_URL ? `wallnote-${wallpaper ? key : kind}` : 'wallnote-desktop' },
     });
     const handle = win.getNativeWindowHandle().readBigUInt64LE().toString();
     const entry: Entry = { key, kind, win, handle, attached: false, bounds, topmost: false, inputScale: screen.getDisplayMatching(bounds).scaleFactor, displayId: screen.getDisplayMatching(bounds).id };

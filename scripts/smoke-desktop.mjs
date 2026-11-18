@@ -9,7 +9,7 @@ import { configureEnvironment } from './environment.mjs';
 configureEnvironment();
 await mkdir('test-results', { recursive: true });
 const profile = await mkdtemp(path.resolve('test-results', 'input-v4-'));
-const env = { ...process.env, WALLNOTE_DATA_DIR: profile, WALLNOTE_SHOW_MANAGER: '0' };
+const env = { ...process.env, WALLNOTE_DATA_DIR: profile, WALLNOTE_SHOW_MANAGER: '0', WALLNOTE_CREATE_MANAGER: '1' };
 delete env.VITE_DEV_SERVER_URL;
 const packaged = process.argv.includes('--packaged');
 const nativePath = path.resolve(packaged ? 'release/win-unpacked/resources/native/WallNote.DesktopHost.exe' : 'dist-native/WallNote.DesktopHost.exe');

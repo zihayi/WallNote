@@ -8,8 +8,8 @@ export function Modal({ title, children, onClose, className = '' }: { title: str
   closeRef.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const selector = 'button:not(:disabled), input, textarea, select, [tabindex="0"]';
-    const input = ref.current?.querySelector<HTMLElement>('[data-autofocus]');
+    const selector = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]';
+    const input = ref.current?.querySelector<HTMLElement>('[data-autofocus]:not(:disabled)');
     (input ?? ref.current?.querySelector<HTMLElement>(selector))?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }

@@ -27,6 +27,27 @@ export interface ScheduleEvent {
   end: string;
   description: string;
   color: NoteColor;
+  phone?: { eventId: string; clientId: string; revision: string; calendarName: string; readOnly: boolean; reason: string; location?: string };
+}
+
+export interface PhoneSyncItem {
+  state: 'queued' | 'delivered' | 'synced' | 'failed' | 'uncertain' | 'changed' | 'conflict';
+  message: string;
+  linked: boolean;
+  revision?: string;
+}
+export interface PhoneSyncView {
+  configured: boolean;
+  connected: boolean;
+  phoneOnline: boolean;
+  canWrite: boolean;
+  device: string;
+  lastSync: string | null;
+  calendarId: string | null;
+  calendars: { id: string; name: string; writable: boolean }[];
+  pending: number;
+  error: string | null;
+  items: Record<string, PhoneSyncItem>;
 }
 
 export interface Wallpaper {
@@ -43,6 +64,8 @@ export interface AppState {
   notes: Note[];
   tasks: Task[];
   events?: ScheduleEvent[];
+  phoneEvents?: ScheduleEvent[];
+  phoneSync?: PhoneSyncView;
   calendarDate?: string;
   wallpapers: Wallpaper[];
   favorites: string[];
@@ -71,7 +94,7 @@ export type Action =
   | { type: 'task:delete'; id: string }
   | { type: 'task:clearCompleted' }
   | { type: 'event:add'; event: ScheduleEvent }
-  | { type: 'event:update'; id: string; changes: Partial<Omit<ScheduleEvent, 'id'>> }
+  | { type: 'event:update'; id: string; changes: Partial<Omit<ScheduleEvent, 'id' | 'phone'>>; expectedRevision?: string }
   | { type: 'event:delete'; id: string }
   | { type: 'calendar:select'; date: string }
   | { type: 'widget:topmost'; key: string; enabled: boolean }
@@ -93,6 +116,7 @@ export interface DesktopStatus {
 export interface DesktopSurface {
   bounds: { x: number; y: number; width: number; height: number };
   display: { x: number; y: number; width: number; height: number };
+  topmost: boolean;
 }
 
 export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showDesktop' | 'resetLayout' | 'quit';
@@ -107,6 +131,8 @@ export interface WallNoteAPI {
   openDataFolder(): Promise<void>;
   exportBackup(): Promise<boolean>;
   restoreBackup(): Promise<AppState | null>;
+  phoneSyncControl(command: 'connect' | 'refresh' | 'disconnect' | 'calendar', calendarId?: string): Promise<PhoneSyncView>;
+  sendEventToPhone(id: string, expectedRevision?: string): Promise<PhoneSyncView>;
   getDesktopStatus(): Promise<DesktopStatus>;
   desktopControl(command: DesktopCommand): Promise<DesktopStatus>;
   onDesktopStatus(callback: (status: DesktopStatus) => void): () => void;

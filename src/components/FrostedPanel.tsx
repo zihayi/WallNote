@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Grip, Pin, PinOff, Settings, X } from 'lucide-react';
 import { allWallpapers } from '../../shared/state';
 import type { AppState, DesktopSurface } from '../../shared/types';
-import { api, errorMessage, isDesktop, wallpaperURL } from '../api';
+import { api, blurredWallpaperURL, errorMessage, isDesktop, wallpaperURL } from '../api';
 import { beginDesktopManipulation } from './desktop-input';
 
 export function FrostedPanel({ state, title, widgetKey, icon, children, desktop = false, className = '', onClose, actions }: {
@@ -28,8 +28,9 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
   }, [desktop]);
   const wallpapers = allWallpapers(state);
   const current = wallpapers.find(w => w.id === state.appliedWallpaperId) ?? wallpapers.find(w => w.id === state.selectedWallpaperId) ?? wallpapers[0];
-  return <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onPointerDownCapture={() => { if (desktop) api.focusDesktopWidget(); }}>
-    {surface && state.settings.glassEnabled !== false && <div className="frost-scene" aria-hidden="true" style={{ left: surface.display.x - surface.bounds.x, top: surface.display.y - surface.bounds.y, width: surface.display.width, height: surface.display.height, backgroundImage: `url("${wallpaperURL(current)}")` }} />}
+  const sceneStyle = surface ? { left: surface.display.x - surface.bounds.x, top: surface.display.y - surface.bounds.y, width: surface.display.width, height: surface.display.height, backgroundImage: `url("${wallpaperURL(current)}")` } : undefined;
+  const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onPointerDownCapture={() => { if (desktop) api.focusDesktopWidget(); }}>
+    {surface && state.settings.glassEnabled !== false && <div className="frost-scene" aria-hidden="true" style={{ ...sceneStyle, backgroundImage: `url("${blurredWallpaperURL(current)}")` }} />}
     <div className="frost-tint" aria-hidden="true" />
     <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? topmost ? '拖动以移动组件' : '点击图钉置顶后可移动和调整大小' : undefined} onPointerDown={event => { if (desktop && topmost) beginDesktopManipulation(event, 'move'); }}>
       <div className="frost-title">{desktop && topmost ? <Grip size={15} /> : icon}<h2>{title}</h2></div>
@@ -39,4 +40,15 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
     {pinError && <p className="widget-error" role="alert">{pinError}</p>}
     {desktop && topmost && <button className="desktop-resize-handle" aria-label={`拖动调整${title}大小`} onPointerDown={event => beginDesktopManipulation(event, 'resize')} />}
   </section>;
+  if (!desktop) return panel;
+  // WorkerW child windows can flatten per-pixel alpha into a rectangular surface. In that
+  // layer, paint the matching, unblurred wallpaper underneath the rounded card. This keeps
+  // the edge anti-aliased without depending on child-window alpha or a jagged GDI region.
+  // Floating windows use actual transparency. Surface metadata follows the native layer,
+  // so a pin/unpin transition cannot briefly use the wrong composition mode.
+  const embedded = surface ? !surface.topmost : !topmost;
+  return <div className={`native-widget-root ${embedded ? 'desktop-composite' : 'floating-composite'}`}>
+    {embedded && surface && <div className="desktop-corner-underlay" aria-hidden="true"><div className="desktop-corner-scene" style={sceneStyle} /></div>}
+    {panel}
+  </div>;
 }

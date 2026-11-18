@@ -127,6 +127,22 @@ export function validPosition(value: unknown): boolean {
   return value === undefined || (isRecord(value) && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) && Number(value.width) >= 240 && Number(value.width) <= 2000 && Number(value.height) >= 200 && Number(value.height) <= 2000);
 }
 
+function validSchedule(value: unknown, fromPhone: boolean): boolean {
+  if (!isRecord(value) || !isId(value.id) || !isText(value.title, 120) || !value.title.trim() || !validDate(value.date) || !isText(value.start, 5) || !isText(value.end, 5) || !isText(value.description, 5000) || !noteColors.includes(value.color as Note['color'])) return false;
+  if (eventError(value as unknown as import('./types').ScheduleEvent)) return false;
+  if (!fromPhone) return value.phone === undefined && !value.id.startsWith('phone-');
+  const phone = value.phone;
+  return value.id.startsWith('phone-') && isRecord(phone) && isText(phone.eventId, 18) && /^\d+$/.test(phone.eventId) && isText(phone.clientId, 128) && isText(phone.revision, 64) && /^[0-9a-f]{64}$/.test(phone.revision) && isText(phone.calendarName, 120) && typeof phone.readOnly === 'boolean' && isText(phone.reason, 300) && (phone.location === undefined || isText(phone.location, 1000));
+}
+
+function validPhoneSync(value: unknown): boolean {
+  if (!isRecord(value) || ['configured', 'connected', 'phoneOnline', 'canWrite'].some(key => typeof value[key] !== 'boolean') || !isText(value.device, 200) || !Number.isInteger(value.pending) || Number(value.pending) < 0 || !Array.isArray(value.calendars) || value.calendars.length > 10000 || !isRecord(value.items)) return false;
+  if (value.error !== null && !isText(value.error, 500) || value.lastSync !== null && (!isText(value.lastSync, 100) || !Number.isFinite(Date.parse(value.lastSync)))) return false;
+  if (value.calendarId !== null && (!isText(value.calendarId, 18) || !/^\d+$/.test(value.calendarId))) return false;
+  if (!value.calendars.every(row => isRecord(row) && isText(row.id, 18) && /^\d+$/.test(row.id) && isText(row.name, 120) && typeof row.writable === 'boolean')) return false;
+  return Object.entries(value.items).length <= 20000 && Object.entries(value.items).every(([id, item]) => isId(id) && isRecord(item) && ['queued', 'delivered', 'synced', 'failed', 'uncertain', 'changed', 'conflict'].includes(String(item.state)) && isText(item.message, 500) && typeof item.linked === 'boolean' && (item.revision === undefined || isText(item.revision, 64) && /^[a-f0-9]{64}$/.test(item.revision)));
+}
+
 export function isValidState(value: unknown): value is AppState {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !Array.isArray(value.wallpapers) || !Array.isArray(value.favorites)) return false;
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
@@ -137,7 +153,9 @@ export function isValidState(value: unknown): value is AppState {
   if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;
   if (value.settings.activeDesktopNote !== undefined && !isId(value.settings.activeDesktopNote)) return false;
   if (value.settings.topmostWidgets !== undefined && (!Array.isArray(value.settings.topmostWidgets) || value.settings.topmostWidgets.length > 510 || !value.settings.topmostWidgets.every(validWidgetKey) || new Set(value.settings.topmostWidgets).size !== value.settings.topmostWidgets.length)) return false;
-  if (value.events !== undefined && (!Array.isArray(value.events) || value.events.length > 10000 || !value.events.every(event => isRecord(event) && isId(event.id) && isText(event.title, 120) && event.title.trim().length > 0 && validDate(event.date) && isText(event.start, 5) && isText(event.end, 5) && isText(event.description, 5000) && noteColors.includes(event.color as Note['color']) && eventError(event as unknown as import('./types').ScheduleEvent) === null) || new Set(value.events.map(event => event.id)).size !== value.events.length)) return false;
+  if (value.events !== undefined && (!Array.isArray(value.events) || value.events.length > 10000 || !value.events.every(event => validSchedule(event, false)) || new Set(value.events.map(event => event.id)).size !== value.events.length)) return false;
+  if (value.phoneEvents !== undefined && (!Array.isArray(value.phoneEvents) || value.phoneEvents.length > 10000 || !value.phoneEvents.every(event => validSchedule(event, true)) || new Set(value.phoneEvents.map(event => event.id)).size !== value.phoneEvents.length)) return false;
+  if (value.phoneSync !== undefined && !validPhoneSync(value.phoneSync)) return false;
   const notesValid = value.notes.every(n => isRecord(n) && isId(n.id) && isText(n.title, 120) && isText(n.content, 50000) && noteColors.includes(n.color as Note['color']) && typeof n.pinned === 'boolean' && isText(n.updatedAt, 50) && Number.isFinite(Date.parse(n.updatedAt)) && (n.position === undefined || (isRecord(n.position) && ['x', 'y', 'width', 'height'].every(k => typeof n.position === 'object' && Number.isFinite((n.position as Record<string, unknown>)[k])) && Number(n.position.width) >= 240 && Number(n.position.width) <= 2000 && Number(n.position.height) >= 200 && Number(n.position.height) <= 2000)));
   const tasksValid = value.tasks.every(t => isRecord(t) && isId(t.id) && isText(t.text, 500) && t.text.trim().length > 0 && typeof t.completed === 'boolean' && typeof t.priority === 'boolean' && isText(t.createdAt, 50) && Number.isFinite(Date.parse(t.createdAt)));
   const wallpapersValid = value.wallpapers.every(w => isRecord(w) && isId(w.id) && isText(w.name, 120) && isText(w.description, 500) && w.category === 'imported' && typeof w.file === 'string' && /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|bmp)$/i.test(w.file) && Array.isArray(w.colors) && w.colors.every(c => typeof c === 'string' && /^#[\da-fA-F]{6}$/.test(c)));

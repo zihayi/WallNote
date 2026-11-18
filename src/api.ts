@@ -42,7 +42,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.4.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false }),
+  getInfo: async () => ({ version: '0.5.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -53,6 +53,8 @@ const previewAPI: WallNoteAPI = {
     return true;
   },
   restoreBackup: async () => { throw new Error('请在桌面版中恢复 JSON 备份。'); },
+  phoneSyncControl: async () => { throw new Error('手机日历同步需要 Windows 桌面版。'); },
+  sendEventToPhone: async () => { throw new Error('请在桌面版中连接 CalendarBridge。'); },
   getDesktopStatus: async () => ({ enabled: false, active: false, displays: 0, widgets: 0, error: null }),
   desktopControl: async () => { throw new Error('请启动 Windows 桌面版，将 WallNote 直接铺到电脑桌面。'); },
   onDesktopStatus: () => () => undefined,
@@ -69,6 +71,7 @@ export const isDesktop = !!window.wallnote;
 export function wallpaperURL(wallpaper: Wallpaper): string {
   return wallpaper.category === 'imported' ? `wallnote://image/${wallpaper.id}` : `./wallpapers/${wallpaper.file}`;
 }
+export function blurredWallpaperURL(wallpaper: Wallpaper): string { return isDesktop ? `wallnote://blur/${wallpaper.id}` : wallpaperURL(wallpaper); }
 
 export function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : '操作失败，请稍后再试。';

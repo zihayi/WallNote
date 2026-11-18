@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowDownToLine, ArrowRight, ArrowUpFromLine, CalendarDays, Check, CheckCheck, CheckCircle2, ChevronRight, CircleHelp, CloudOff, FolderOpen, Heart, Image, LayoutDashboard, Loader2, Maximize2, Minus, Monitor, PanelTop, Pin, Plus, Search, Settings, ShieldCheck, SlidersHorizontal, StickyNote, Trash2, X } from 'lucide-react';
 import type { Action, AppInfo, AppState, DesktopCommand, DesktopStatus, Note, Page, Wallpaper } from '../shared/types';
 import { allWallpapers } from '../shared/state';
-import { dateKey } from '../shared/calendar';
+import { calendarEvents, dateKey } from '../shared/calendar';
 import { api, errorMessage, isDesktop, wallpaperURL } from './api';
 import { Modal } from './components/Modal';
 import { FloatingNote, NoteCard, NoteEditor } from './components/Notes';
 import { TaskInput, TaskRow } from './components/Tasks';
 import { DesktopTasks, DesktopWallpaper, EmptyNotesPanel, PlannerWorkspace } from './components/Desktop';
 import { CalendarPanel, HourlySchedule } from './components/Planner';
+import { PhoneSettings } from './components/PhoneSettings';
 
 const navigation: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
@@ -146,7 +147,7 @@ export default function App() {
   const searchNotes = state.notes.filter(n => matches(`${n.title} ${n.content}`)).slice(0, 5);
   const searchTasks = state.tasks.filter(t => matches(t.text)).slice(0, 5);
   const searchWallpapers = wallpapers.filter(w => matches(`${w.name} ${w.description}`)).slice(0, 5);
-  const searchEvents = (state.events ?? []).filter(event => matches(`${event.title} ${event.description} ${event.date}`)).slice(0, 5);
+  const searchEvents = calendarEvents(state).filter(event => matches(`${event.title} ${event.description} ${event.date}`)).slice(0, 5);
   const noteCard = (note: Note) => <NoteCard key={note.id} note={note} onEdit={() => setNoteEditor(note)} onPin={() => void run({ type: 'note:update', id: note.id, changes: { pinned: !note.pinned } })} onDelete={() => setConfirm({ title: '删除便签？', description: `将删除「${note.title || '无标题便签'}」。`, action: { type: 'note:delete', id: note.id } })} />;
 
   return <div className={`app-shell ${isDesktop ? 'desktop' : ''}`}>
@@ -190,8 +191,8 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>桌面组件、外观与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.4.0'}</span></div>
-          <div className="settings-layout"><div><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>桌面组件、外观与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.5.0'}</span></div>
+          <div className="settings-layout"><div><PhoneSettings state={state} /><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
             <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方；点击组件图钉后置顶，可移动和缩放</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
             {([
               ['showDesktopSchedule', '显示时间安排', '左侧显示选中日期的按小时日程'],

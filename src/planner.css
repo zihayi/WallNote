@@ -11,6 +11,12 @@ html[data-view='workspace'] body { overflow: hidden; }
   box-shadow: 0 10px 36px #263f321c, inset 0 1px 0 #ffffffb0; overflow: hidden;
 }
 .frost-panel.native-panel { width: 100vw; height: 100vh; margin: 0; box-shadow: inset 0 1px 0 #ffffff80; background: transparent; clip-path: inset(0 round 20px); }
+.native-widget-root { position: relative; isolation: isolate; width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
+.desktop-corner-underlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.desktop-corner-scene { position: absolute; background-position: center; background-size: cover; }
+.native-widget-root > .native-panel { position: relative; z-index: 1; }
+.native-panel { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.native-panel .frost-scene { filter: none; }
 .frost-scene { position: absolute; z-index: -2; pointer-events: none; background-size: cover; background-position: center; filter: blur(24px) saturate(1.12); }
 .frost-tint { position: absolute; inset: 0; z-index: -1; background: var(--frost-fill); pointer-events: none; }
 .solid-panel .frost-tint { background: #f4f7f3; }
@@ -140,6 +146,22 @@ html[data-view='workspace'] body { overflow: hidden; }
 .event-color-row { display: flex; align-items: center; gap: 15px; padding: 3px 0; color: #7c8d72; font-size: 11px; }
 .event-form-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; }
 .event-form-footer > .icon-button { margin-right: auto; }
+.event-form-footer { flex-wrap: wrap; }
+.event-phone-info { display: flex; gap: 7px; align-items: flex-start; padding: 9px 10px; border-radius: 8px; background: #edf4f8; color: #667f91; font-size: 10px; line-height: 1.7; }
+.event-phone-info > svg { margin-top: 2px; }
+.event-phone-info > span { max-height: 66px; overflow-y: auto; overflow-wrap: anywhere; }
+.event-source-line { display: flex; align-items: center; gap: 4px; color: #6c889a; font-size: 9px; line-height: 1.6; }
+.phone-calendar-status { padding-top: 8px; color: #a08055; font-size: 10px; }
+.phone-settings .settings-description code { overflow-wrap: anywhere; font-size: 10px; }
+.phone-connection-status { display: flex; align-items: center; gap: 10px; padding: 14px; background: #f4f5f1; border-radius: 9px; margin: 17px 0; }
+.phone-connection-status > i { height: 7px; width: 7px; border-radius: 50%; background: #b7bcaf; }
+.phone-connection-status.connected > i { background: #7a9c72; }
+.phone-connection-status strong { display: block; font-size: 12px; font-weight: 500; color: #6b7e60; }
+.phone-connection-status span { display: block; font-size: 10px; color: #98a38e; margin-top: 5px; }
+.phone-calendar-select { display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: #849478; }
+.phone-calendar-select select { max-width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #dfe7d8; border-radius: 7px; background: #f8faf5; color: #647b55; font-size: 12px; }
+.phone-permission-status { display: flex; gap: 15px; flex-wrap: wrap; margin: 13px 0; font-size: 10px; color: #8c9c7e; }
+.phone-settings .settings-buttons { flex-wrap: wrap; }
 .event-confirm { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .event-confirm > p { width: 100%; font-size: 11px; color: #9b7962; margin-bottom: 5px; }
 .frost-panel .modal-backdrop { padding: 14px; background: #2f4f3b48; z-index: 20; }

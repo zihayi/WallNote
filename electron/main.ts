@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, shell, Tray, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -8,12 +8,22 @@ import type { Action, AppState, DesktopCommand, Wallpaper } from '../shared/type
 import { StateStore } from './store';
 import { DesktopController } from './desktop';
 import { upgradeDesktopLayout } from '../shared/layout';
+import { PhoneSyncController } from './phone-sync';
+import { parsePhoneProfile } from './phone-client';
+import { WallpaperCache } from './wallpaper-cache';
+import { stateForView } from '../shared/renderer-state';
+import { dateKey } from '../shared/calendar';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
 app.setName('WallNote');
+// Static wallpapers and pre-blurred widgets do not need a GPU raster cache per window.
+// Keep an explicit escape hatch for machines with unusual software-compositor behavior.
+if (process.env.WALLNOTE_HARDWARE_RENDERING !== '1') app.disableHardwareAcceleration();
 // Explorer's icon view covers the wallpaper HWND; Chromium must not treat it as an occluded app.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// All renderer pages are bundled, same-site application UI. Reuse a renderer for that site.
+app.commandLine.appendSwitch('process-per-site');
 protocol.registerSchemesAsPrivileged([{ scheme: 'wallnote', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
@@ -24,10 +34,13 @@ const assetDir = devURL ? path.join(__dirname, '..', 'public') : rendererDir;
 const store = new StateStore(app.getPath('userData'));
 const imageDir = path.join(store.directory, 'wallpapers');
 let mainWindow: BrowserWindow | null = null;
+let managerIdleTimer: ReturnType<typeof setTimeout> | null = null;
+let rendererDayTimer: ReturnType<typeof setInterval> | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let flushed = false;
 let queue: Promise<unknown> = Promise.resolve();
+const wallpaperCache = new WallpaperCache(path.join(store.directory, 'render-cache'), wallpaperPath);
 const desktop = new DesktopController(() => store.state, loadWindow, action => serial(async () => {
   if (quitting) return;
   await store.save(reduceState(store.state, action));
@@ -36,6 +49,10 @@ const desktop = new DesktopController(() => store.state, loadWindow, action => s
   for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.send('desktop:changed', status);
   updateTray();
 });
+const phoneSync = new PhoneSyncController(store.directory, () => store.state, transform => serial(async () => {
+  const next = transform(store.state);
+  if (JSON.stringify(next) !== JSON.stringify(store.state)) { await store.save(next); broadcast(); }
+}));
 
 function serial<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work);
@@ -68,7 +85,7 @@ async function loadWindow(win: BrowserWindow, query: Record<string, string> = {}
   } else await win.loadFile(path.join(rendererDir, 'index.html'), { query });
 }
 
-function createMainWindow(): void {
+function createMainWindow(show = false): void {
   mainWindow = new BrowserWindow({
     width: 1380, height: 920, minWidth: 1000, minHeight: 720, frame: false,
     backgroundColor: '#f6f7f9', title: 'WallNote', icon: path.join(assetDir, 'icon.png'),
@@ -76,14 +93,28 @@ function createMainWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   secureWindow(mainWindow);
-  mainWindow.once('ready-to-show', () => { if (process.argv.includes('--manage') || process.env.WALLNOTE_SHOW_MANAGER === '1') mainWindow?.show(); });
-  mainWindow.on('close', event => { if (!flushed) { event.preventDefault(); mainWindow?.hide(); } });
+  const window = mainWindow;
+  window.on('show', () => { if (!window.isDestroyed()) window.webContents.send('state:changed', store.state); });
+  mainWindow.once('ready-to-show', () => { if (show && !window.isDestroyed()) { window.show(); window.focus(); } });
+  mainWindow.on('close', event => {
+    if (flushed) return;
+    event.preventDefault(); window.hide();
+    if (managerIdleTimer) clearTimeout(managerIdleTimer);
+    managerIdleTimer = setTimeout(() => {
+      // Keep open forms and unfinished task input; release only an idle management page.
+      if (window.isDestroyed() || window.isVisible()) return;
+      void window.webContents.executeJavaScript(`Boolean(document.querySelector('[role="dialog"], .task-edit-form') || [...document.querySelectorAll('.task-input input')].some(input => input.value.trim()) || [...document.querySelectorAll('.save-status')].some(item => /保存失败|正在编辑|保存中/.test(item.textContent)))`).then(hasDraft => {
+        if (!hasDraft && mainWindow === window && !window.isDestroyed() && !window.isVisible()) window.destroy();
+      }).catch(() => undefined);
+    }, 30000);
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
   void loadWindow(mainWindow);
 }
 
 function showManager() {
-  if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
+  if (managerIdleTimer) clearTimeout(managerIdleTimer);
+  if (!mainWindow || mainWindow.isDestroyed()) { createMainWindow(true); return; }
   if (mainWindow?.isMinimized()) mainWindow.restore();
   mainWindow?.show(); mainWindow?.focus();
 }
@@ -129,8 +160,14 @@ function reportBackgroundError(error: unknown): void {
 }
 
 function broadcast(): void {
-  for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.send('state:changed', store.state);
+  for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed() && (win !== mainWindow || win.isVisible())) win.webContents.send('state:changed', rendererState(win.webContents));
   updateTray();
+}
+
+function rendererState(contents: WebContents): AppState {
+  if (mainWindow?.webContents === contents) return store.state;
+  const entry = desktop.identify(contents);
+  return stateForView(store.state, entry?.kind ?? 'wallpaper', entry?.kind === 'note' ? entry.key.slice(5) : undefined);
 }
 
 function validateAction(value: unknown): asserts value is Action {
@@ -144,7 +181,9 @@ function validateAction(value: unknown): asserts value is Action {
     'wallpaper:favorite': ['type', 'id'], 'wallpaper:select': ['type', 'id'], 'wallpaper:delete': ['type', 'id'], 'settings:update': ['type', 'changes'],
   };
   const keys = allowed[value.type];
-  if (!keys || Object.keys(action).some(k => !keys.includes(k)) || keys.some(k => !(k in action))) throw new Error('无效的操作参数');
+  const optional = value.type === 'event:update' ? ['expectedRevision'] : [];
+  if (!keys || Object.keys(action).some(k => !keys.includes(k) && !optional.includes(k)) || keys.some(k => !(k in action))) throw new Error('无效的操作参数');
+  if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
     const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
@@ -156,7 +195,7 @@ function validateAction(value: unknown): asserts value is Action {
 }
 
 function installIPC(): void {
-  ipcMain.handle('state:get', event => { trusted(event); return store.state; });
+  ipcMain.handle('state:get', event => { trusted(event); return rendererState(event.sender); });
   ipcMain.handle('state:dispatch', (event, input: unknown) => {
     trusted(event); validateAction(input);
     if (quitting) throw new Error('正在退出，请稍后重新打开。');
@@ -173,6 +212,8 @@ function installIPC(): void {
     }
     if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
     }
+    if (input.type === 'event:update' && phoneSync.isPhoneEvent(input.id)) return phoneSync.updatePhone(input.id, input.changes, input.expectedRevision).then(() => rendererState(event.sender));
+    if (input.type === 'event:delete' && (phoneSync.isPhoneEvent(input.id) || phoneSync.isLinked(input.id))) throw new Error('此日程来自手机或已关联手机，当前版本不支持删除手机日程。');
     return serial(async () => {
       let next = reduceState(store.state, input);
       if ((input.type === 'note:add' && input.note.pinned) || (input.type === 'note:update' && input.changes.pinned === true)) next = { ...next, settings: { ...next.settings, showDesktopNotes: true } };
@@ -185,9 +226,10 @@ function installIPC(): void {
       if (input.type === 'wallpaper:delete') {
         // Imported files are app-owned copies; the original image is never removed.
         await fs.unlink(path.join(imageDir, `${input.id}.jpg`)).catch(() => undefined);
+        await wallpaperCache.remove(input.id);
       }
       await desktop.sync(); broadcast();
-      return store.state;
+      return rendererState(event.sender);
     });
   });
   ipcMain.handle('wallpaper:import', async event => {
@@ -234,6 +276,26 @@ function installIPC(): void {
     });
   });
   ipcMain.handle('app:info', event => { trusted(event); return { version: app.getVersion(), platform: process.platform, dataPath: store.directory, desktop: true }; });
+  ipcMain.handle('phone:control', async (event, command: string, calendarId?: string) => {
+    trusted(event, true);
+    if (command === 'connect') {
+      const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择 CalendarBridge 的电脑连接配置', filters: [{ name: '电脑连接配置', extensions: ['json'] }], properties: ['openFile'] });
+      if (selected.canceled) return phoneSync.getStatus();
+      if ((await fs.stat(selected.filePaths[0])).size > 32768) throw new Error('连接配置文件过大。');
+      return phoneSync.connect(parsePhoneProfile(await fs.readFile(selected.filePaths[0], 'utf8')));
+    }
+    if (command === 'refresh') return phoneSync.refresh();
+    if (command === 'disconnect') return phoneSync.disconnect();
+    if (command === 'calendar' && typeof calendarId === 'string') return phoneSync.chooseCalendar(calendarId);
+    throw new Error('未知手机同步操作。');
+  });
+  ipcMain.handle('phone:send', (event, id: string, expectedRevision?: string) => {
+    trusted(event);
+    const widget = desktop.identify(event.sender);
+    if (widget && widget.kind !== 'calendar' && widget.kind !== 'schedule') throw new Error('请通过日历或时间安排发送日程。');
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id) || expectedRevision !== undefined && !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('日程参数无效。');
+    return phoneSync.sendLocal(id, expectedRevision);
+  });
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
   ipcMain.on('desktop:focus', event => {
@@ -300,13 +362,20 @@ if (hasLock) {
       await store.save(updatedLayout);
     }
     if (store.state.settings.desktopEnabled !== false && !store.state.appliedWallpaperId) await store.save({ ...store.state, appliedWallpaperId: store.state.selectedWallpaperId });
-    protocol.handle('wallnote', request => {
+    protocol.handle('wallnote', async request => {
       const url = new URL(request.url);
       const wallpaper = allWallpapers(store.state).find(w => w.id === url.pathname.slice(1));
-      if (url.hostname !== 'image' || !wallpaper || request.method !== 'GET') return new Response('Not found', { status: 404 });
-      return net.fetch(pathToFileURL(wallpaperPath(wallpaper)).toString());
+      if (!['image', 'blur'].includes(url.hostname) || !wallpaper || request.method !== 'GET') return new Response('Not found', { status: 404 });
+      try { return net.fetch(pathToFileURL(url.hostname === 'blur' ? await wallpaperCache.blur(wallpaper) : wallpaperPath(wallpaper)).toString()); }
+      catch { return new Response('Image unavailable', { status: 404 }); }
     });
-    installIPC(); createMainWindow();
+    await phoneSync.start();
+    installIPC();
+    let renderedDay = dateKey();
+    rendererDayTimer = setInterval(() => { const day = dateKey(); if (day !== renderedDay) { renderedDay = day; broadcast(); } }, 30000);
+    rendererDayTimer.unref();
+    const showOnStart = process.argv.includes('--manage') || process.env.WALLNOTE_SHOW_MANAGER === '1';
+    if (showOnStart || process.env.WALLNOTE_CREATE_MANAGER === '1') createMainWindow(showOnStart);
     tray = new Tray(nativeImage.createFromPath(path.join(assetDir, 'icon.png')).resize({ width: 20, height: 20 }));
     tray.on('double-click', showManager);
     updateTray();
@@ -322,8 +391,11 @@ if (hasLock) {
     if (quitting) return;
     quitting = true;
     globalShortcut.unregisterAll();
+    if (managerIdleTimer) clearTimeout(managerIdleTimer);
+    if (rendererDayTimer) clearInterval(rendererDayTimer);
     void (async () => {
       try {
+        await phoneSync.stop();
         const positions = await desktop.positions();
         await serial(async () => {
           let next = store.state;

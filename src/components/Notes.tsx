@@ -8,8 +8,8 @@ import { FrostedPanel } from './FrostedPanel';
 
 const colorLabels: Record<NoteColor, string> = { butter: '奶油黄', lavender: '浅薰衣草', mint: '薄荷绿', rose: '蔷薇粉', sky: '天空蓝' };
 
-export function ColorPicker({ value, onChange, label = '便签颜色' }: { value: NoteColor; onChange: (color: NoteColor) => void; label?: string }) {
-  return <div className="color-picker" aria-label={label}>{noteColors.map(color => <button type="button" key={color} className={`color-dot ${color}`} aria-label={colorLabels[color]} aria-pressed={value === color} onClick={() => onChange(color)}>{value === color && <Check size={13} />}</button>)}</div>;
+export function ColorPicker({ value, onChange, label = '便签颜色', disabled = false }: { value: NoteColor; onChange: (color: NoteColor) => void; label?: string; disabled?: boolean }) {
+  return <div className="color-picker" aria-label={label}>{noteColors.map(color => <button type="button" key={color} disabled={disabled} className={`color-dot ${color}`} aria-label={colorLabels[color]} aria-pressed={value === color} onClick={() => onChange(color)}>{value === color && <Check size={13} />}</button>)}</div>;
 }
 
 function relativeDate(date: string): string {
