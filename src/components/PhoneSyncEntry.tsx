@@ -18,11 +18,11 @@ export function PhoneSyncEntry({ view, widget = false, onError }: { view?: Phone
 
 // One destination for the toolbar and native calendar, including a cold manager launch.
 // An external deep link waits for an open editor instead of unmounting its unsaved draft.
-export function usePhoneSyncLink(manager: boolean, ready: boolean, page: Page, setPage: (page: Page) => void) {
-  const [requested, request] = useState(false);
+export function useManagerLink(manager: boolean, ready: boolean, page: Page, setPage: (page: Page) => void) {
+  const [requested, request] = useState('');
   useEffect(() => {
     if (!manager) return;
-    const read = () => request(location.hash === '#phone-sync');
+    const read = () => request(['#community','#phone-sync'].includes(location.hash) ? location.hash : '');
     read(); window.addEventListener('hashchange', read);
     return () => window.removeEventListener('hashchange', read);
   }, [manager]);
@@ -30,11 +30,12 @@ export function usePhoneSyncLink(manager: boolean, ready: boolean, page: Page, s
     if (!requested || !ready) return;
     const navigate = () => {
       if (document.querySelector('[role="dialog"], .task-edit-form')) return false;
-      if (page !== 'settings') { setPage('settings'); return true; }
-      const section = document.getElementById('phone-sync');
+      const target = requested === '#community' ? 'community' : 'settings';
+      if (page !== target) { setPage(target); return true; }
+      const section = document.getElementById(requested.slice(1));
       section?.focus({ preventScroll: true }); section?.scrollIntoView({ block: 'start' });
       history.replaceState(history.state, '', location.href.split('#')[0]);
-      request(false); return true;
+      request(''); return true;
     };
     if (navigate()) return;
     const observer = new MutationObserver(() => { if (navigate()) observer.disconnect(); });

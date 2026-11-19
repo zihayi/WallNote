@@ -10,11 +10,14 @@ import { TaskInput, TaskRow } from './components/Tasks';
 import { DesktopTasks, DesktopWallpaper, EmptyNotesPanel, PlannerWorkspace } from './components/Desktop';
 import { CalendarPanel, HourlySchedule } from './components/Planner';
 import { PhoneSettings } from './components/PhoneSettings';
-import { PhoneSyncEntry, usePhoneSyncLink } from './components/PhoneSyncEntry';
+import { PhoneSyncEntry, useManagerLink } from './components/PhoneSyncEntry';
+import { GitPullRequest } from 'lucide-react';
+import { CommunityPanel, CommunityPage, ModuleLayout } from './components/Community';
 
 const navigation: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
   { id: 'calendar', label: '日历与日程', icon: CalendarDays },
+  { id: 'community', label: '社区日报', icon: GitPullRequest },
   { id: 'wallpapers', label: '壁纸库', icon: Image },
   { id: 'notes', label: '便签', icon: StickyNote },
   { id: 'tasks', label: '待办清单', icon: CheckCircle2 },
@@ -55,7 +58,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return params.has('wallpaper') ? 'wallpaper' : params.has('workspace') ? 'workspace' : params.get('widget');
   }, []);
-  usePhoneSyncLink(!floatingId && !desktopView, !!state, page, setPage);
+  useManagerLink(!floatingId && !desktopView, !!state, page, setPage);
 
   useEffect(() => {
     document.documentElement.dataset.view = floatingId || (desktopView && !['workspace', 'wallpaper'].includes(desktopView)) ? 'widget' : desktopView ?? 'manager';
@@ -129,6 +132,7 @@ export default function App() {
   if (desktopView === 'tasks') return <DesktopTasks state={state} desktop />;
   if (desktopView === 'calendar') return <CalendarPanel state={state} desktop />;
   if (desktopView === 'schedule') return <HourlySchedule state={state} desktop />;
+  if (desktopView === 'community') return <CommunityPanel state={state} desktop />;
   if (desktopView === 'notes-empty') return <EmptyNotesPanel state={state} desktop />;
   if (floatingId) {
     const note = state.notes.find(n => n.id === floatingId);
@@ -164,6 +168,7 @@ export default function App() {
       <main className={`main-content ${page === 'dashboard' ? 'workspace-content' : ''}`} key={page}>
         {isDesktop && <div className={`desktop-mode-banner ${desktopStatus.error ? 'has-error' : ''}`}><Monitor size={19} /><div><strong>{desktopStatus.active ? '桌面模式已开启' : desktopStatus.enabled ? '正在连接桌面…' : '桌面模式已暂停'}</strong><p>{desktopStatus.error || (desktopStatus.active ? `${desktopStatus.displays} 块屏幕 · ${desktopStatus.widgets} 个桌面组件` : '开启后在 Windows 桌面显示日历、时间安排、待办和便签。')}</p></div><button className="button small" disabled={!!busy} onClick={() => void desktopCommand(desktopStatus.active ? 'showDesktop' : 'enable')}>{desktopStatus.active ? '查看桌面' : '开启桌面模式'}<ArrowRight size={14} /></button></div>}
 
+        {page === 'community' && <section id="community" tabIndex={-1}><CommunityPage state={state} /></section>}
         {page === 'dashboard' && <>
           <div className="page-heading compact-heading"><div><h1>桌面工作台</h1><p>时间安排、日历、待办清单与便签。</p></div><span className="workspace-date"><CalendarDays size={16} />{now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</span></div>
           <PlannerWorkspace state={state} />
@@ -193,8 +198,9 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.6.4'}</span></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.7.0'}</span></div>
           <div className="settings-layout"><div><PhoneSettings state={state} /><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
+            <ModuleLayout state={state} />
             <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方；点击组件图钉后置顶，可移动和缩放</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
             {([
               ['showDesktopSchedule', '显示时间安排', '左侧显示选中日期的按小时日程'],

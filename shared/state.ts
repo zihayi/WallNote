@@ -1,5 +1,6 @@
 import type { Action, AppState, Note, Task, Wallpaper } from './types';
 import { eventError, validDate } from './calendar';
+import { validSlots, modules } from './modules';
 
 export const builtInWallpapers: Wallpaper[] = [
   { id: 'mist', name: '山野来信', description: '绿色山丘 · 1920 × 1080', category: 'nature', file: 'mist.jpg', colors: ['#59786d', '#a2b4a3', '#dbe1ce'] },
@@ -13,7 +14,7 @@ export const builtInWallpapers: Wallpaper[] = [
 export const noteColors = ['butter', 'lavender', 'mint', 'rose', 'sky'] as const;
 
 export function validWidgetKey(value: unknown): value is string {
-  return typeof value === 'string' && (['tasks', 'calendar', 'schedule', 'notes', 'notes-empty'].includes(value) || /^note:[a-zA-Z0-9_-]{1,100}$/.test(value));
+  return typeof value === 'string' && (Object.hasOwn(modules, value) || value === 'notes-empty' || /^note:[a-zA-Z0-9_-]{1,100}$/.test(value));
 }
 
 export function activeDesktopNote(state: AppState): Note | undefined {
@@ -101,7 +102,7 @@ export function reduceState(state: AppState, action: Action): AppState {
     case 'widget:topmost': {
       if (!validWidgetKey(action.key) || typeof action.enabled !== 'boolean') throw new Error('无效的组件置顶设置。');
       const keys = (state.settings.topmostWidgets ?? []).filter(key => key !== action.key);
-      const visibility = { tasks: 'showDesktopTasks', calendar: 'showDesktopCalendar', schedule: 'showDesktopSchedule', notes: 'showDesktopNotes' }[action.key];
+      const visibility = modules[action.key as keyof typeof modules]?.flag;
       return { ...state, appliedWallpaperId: action.enabled ? state.appliedWallpaperId ?? state.selectedWallpaperId : state.appliedWallpaperId, settings: { ...state.settings, ...(action.enabled ? { desktopEnabled: true, ...(visibility ? { [visibility]: true } : {}) } : {}), topmostWidgets: action.enabled ? [...keys, action.key] : keys } };
     }
     case 'wallpaper:favorite': return { ...state, favorites: state.favorites.includes(action.id) ? state.favorites.filter(id => id !== action.id) : [...state.favorites, action.id] };
@@ -147,8 +148,9 @@ export function isValidState(value: unknown): value is AppState {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !Array.isArray(value.wallpapers) || !Array.isArray(value.favorites)) return false;
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
   if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean') || (value.settings.showDesktopTasks !== undefined && typeof value.settings.showDesktopTasks !== 'boolean') || !validPosition(value.settings.tasksPosition)) return false;
-  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'glassEnabled'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
-  if (['calendarPosition', 'schedulePosition', 'notesPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
+  if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
+  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'glassEnabled'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
+  if (['calendarPosition', 'schedulePosition', 'notesPosition', 'communityPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
   if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;
   if (value.settings.activeDesktopNote !== undefined && !isId(value.settings.activeDesktopNote)) return false;

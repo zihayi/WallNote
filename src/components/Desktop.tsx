@@ -7,6 +7,8 @@ import { TaskInput, TaskRow } from './Tasks';
 import { FrostedPanel } from './FrostedPanel';
 import { CalendarPanel, HourlySchedule } from './Planner';
 import { FloatingNote } from './Notes';
+import { visibleModule, type Slot } from '../../shared/modules';
+import { CommunityPanel } from './Community';
 
 export function DesktopWallpaper({ state }: { state: AppState }) {
   const wallpapers = allWallpapers(state);
@@ -49,8 +51,18 @@ export function PlannerWorkspace({ state, standalone = false }: { state: AppStat
   const wallpapers = allWallpapers(state);
   const wallpaper = wallpapers.find(w => w.id === (standalone ? state.appliedWallpaperId ?? state.selectedWallpaperId : state.selectedWallpaperId)) ?? wallpapers[0];
   const note = activeDesktopNote(state);
+  const panel = (slot: Slot) => {
+    switch (visibleModule(state.settings, slot)) {
+      case 'schedule': return <HourlySchedule state={state} />;
+      case 'calendar': return <CalendarPanel state={state} showPhoneLink={!standalone} />;
+      case 'tasks': return <DesktopTasks state={state} />;
+      case 'notes': return note ? <FloatingNote key={note.id} note={note} state={state} desktop={false} /> : <EmptyNotesPanel state={state} />;
+      case 'community': return <CommunityPanel state={state} />;
+      default: return <div className="workspace-empty-slot" aria-label="空模块位置" />;
+    }
+  };
   return <div className={`planner-workspace ${standalone ? 'standalone-workspace' : ''}`} style={{ backgroundImage: `url("${wallpaperURL(wallpaper)}")` }}>
-    <div className="planner-workspace-grid"><HourlySchedule state={state} /><CalendarPanel state={state} showPhoneLink={!standalone} /><div className="workspace-right"><DesktopTasks state={state} />{note ? <FloatingNote key={note.id} note={note} state={state} desktop={false} /> : <EmptyNotesPanel state={state} />}</div></div>
+    <div className="planner-workspace-grid">{panel('left')}{panel('center')}<div className="workspace-right">{panel('upper')}{panel('lower')}</div></div>
     {standalone && <div className="workspace-watermark">WallNote</div>}
   </div>;
 }

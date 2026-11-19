@@ -1,5 +1,7 @@
 export type NoteColor = 'butter' | 'lavender' | 'mint' | 'rose' | 'sky';
-export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings';
+import type { CommunityView, CommunitySettings } from './community';
+import type { ModuleSlots } from './modules';
+export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings' | 'community';
 
 export interface Note {
   id: string;
@@ -83,6 +85,7 @@ export interface AppState {
   settings: {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
     showDesktopTasks?: boolean; showDesktopCalendar?: boolean; showDesktopSchedule?: boolean; showDesktopNotes?: boolean;
+    showDesktopCommunity?: boolean; moduleSlots?: ModuleSlots; communityPosition?: Note['position'];
     glassEnabled?: boolean;
     topmostWidgets?: string[];
     layoutVersion?: number;
@@ -131,9 +134,15 @@ export interface DesktopSurface {
   topmost: boolean;
 }
 
-export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showPhoneSync' | 'showDesktop' | 'resetLayout' | 'quit';
+export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showPhoneSync' | 'showCommunity' | 'showDesktop' | 'resetLayout' | 'quit';
 
 export interface WallNoteAPI {
+  getCommunity(): Promise<CommunityView>;
+  configureCommunity(settings: CommunitySettings): Promise<CommunityView>;
+  setCommunityKey(key: string | null): Promise<CommunityView>;
+  refreshCommunity(): Promise<CommunityView>;
+  communityItem(action: 'open' | 'task', day: string, id: string): Promise<void>;
+  onCommunity(callback: (view: CommunityView) => void): () => void;
   getState(): Promise<AppState>;
   dispatch(action: Action): Promise<AppState>;
   importWallpapers(): Promise<{ state: AppState; count: number }>;

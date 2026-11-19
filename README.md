@@ -19,6 +19,8 @@
 - **外观**：平滑圆角、毛玻璃背景和细滚动条，支持不同屏幕缩放比例。
 - **数据**：保存在本地，无需登录，可离线使用，支持 JSON 备份与恢复。
 - **手机日历**：同一 Wi-Fi 自动发现 Android 手机，首次确认配对后自动重连，可同步显示并提交新增、修改。
+- **社区日报**：订阅 GitHub 公开仓库或标签，按日查看新 PR、合并动态和待认领 Issue。可用自己的 DeepSeek API Key 生成带来源的中文导读。
+- **模块布局**：在「偏好设置 → 桌面模块布局」给四个位置选择模块或留空，工作台预览和 Windows 桌面共用同一布局。
 - **内存**：桌面共享渲染进程，模糊背景使用缓存，管理窗口按需加载。双屏含 Wi-Fi 接收服务测试私有内存约 263 MB，详见[测量说明](docs/performance.md)。
 
 ## 下载安装（Windows x64）
@@ -74,6 +76,16 @@ npm run dist      # 生成 Windows x64 安装程序和 SHA-256 校验文件
 正式发行只上传 `release/WallNote-Setup-<版本>-x64.exe` 和同名 `.sha256` 文件。`npm run test:ui` 检查界面，`node scripts/smoke-layer.mjs` 检查层级与多屏尺寸；`npm run test:desktop` 会短暂操作鼠标键盘以验证真实桌面交互。
 
 安装包内置 Wi-Fi 接收服务。构建前在 Python 环境执行 `python -m pip install -r receiver/requirements-build.txt`。仓库的 `receiver/` 已包含构建所需源码，无需其他本地工程。可用 `CALENDAR_BUILD_PYTHON` 指定构建用 Python，开发模式下用 `CALENDAR_PYTHON` 指定解释器。
+
+## 社区日报与模块布局
+
+1. 打开管理面板「社区日报 → 订阅设置」。预设为 `llvm/llvm-project` 全仓和同仓的 `mlir` 标签；可改为最多 3 个公开仓库/标签组合。
+2. 点击「生成日报」即可查看近 24 小时仍开放的新 PR、已合并的 PR，以及当前未指派的 `good first issue` / `help wanted`。每个订阅每类取最新的最多 8 条；重叠订阅按仓库和编号去重。可点标题打开原文，或点击 `+` 加入本地待办。
+3. 需要中文导读时，在订阅设置填入自己的 DeepSeek API Key、选择模型和关注方向并开启 AI。密钥由 Windows 系统加密，日报请求只发送关注方向与公开来源元数据。导读每条关联实际来源；AI 不可用时仍保留 GitHub 列表。
+4. 启用「每日自动生成」并选择本地时间。WallNote 需在运行（可留在托盘）；当天错过计划会在启动或唤醒后补跑。每天最多自动尝试一次，手动生成可重试。保留最近 7 个日期的日报，同一天重新生成会更新当期。
+5. 在「社区日报 → 桌面模块布局」为左栏、中栏、右上、右下选择卡片或留空。例如把右上改为「社区日报」，右下保留便签。时间安排和日历需要整栏；置顶后仍可独立拖动、缩放，取消置顶回到自己的槽位。初次升级保留原来的布局。
+
+实现分层：`shared/modules.ts` 定义内置模块和槽位；`electron/community-feed.ts` 采集公开来源并生成带引用的摘要；`electron/community.ts` 负责调度、缓存和历史。配置/历史在数据目录的 `community/community.json`，加密密钥独立保存，不进入 JSON 备份。
 
 ## 手机同步
 

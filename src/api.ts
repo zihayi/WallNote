@@ -1,5 +1,6 @@
 import { createInitialState, isValidState, reduceState } from '../shared/state';
 import type { AppState, WallNoteAPI, Wallpaper } from '../shared/types';
+import { emptyCommunity } from '../shared/community';
 
 const storageKey = 'wallnote.preview.v1';
 const updates = new EventTarget();
@@ -24,6 +25,12 @@ function saveState(state: AppState): AppState {
 }
 
 const previewAPI: WallNoteAPI = {
+  getCommunity: async () => emptyCommunity(),
+  configureCommunity: async () => { throw new Error('请在桌面版设置订阅。'); },
+  setCommunityKey: async () => { throw new Error('密钥只在 Windows 桌面版中设置。'); },
+  refreshCommunity: async () => { throw new Error('请在桌面版生成日报。'); },
+  communityItem: async () => { throw new Error('请在桌面版查看来源。'); },
+  onCommunity: () => () => undefined,
   getState: async () => readState(),
   dispatch: async action => {
     if (action.type === 'note:update' && action.changes.pinned) throw new Error('请运行桌面版，即可将便签贴到桌面。');
@@ -42,7 +49,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.6.4', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.7.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));

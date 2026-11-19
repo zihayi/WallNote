@@ -4,12 +4,13 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import type { Action, AppState, DesktopStatus, DesktopSurface, Note } from '../shared/types';
 import { plannerLayout } from '../shared/layout';
+import { defaultSlots, slots, visibleModule, type ModuleId } from '../shared/modules';
 import { DesktopInputBridge, type MousePacket } from './input-bridge';
 import { activeDesktopNote } from '../shared/state';
 import { finishWidgetExit } from './window-motion';
 
 const execute = promisify(execFile);
-type Kind = 'wallpaper' | 'note' | 'tasks' | 'calendar' | 'schedule' | 'notes-empty';
+type Kind = 'wallpaper' | 'note' | 'tasks' | 'calendar' | 'schedule' | 'notes-empty' | 'community';
 interface Entry { key: string; kind: Kind; win: BrowserWindow; handle: string; attached: boolean; bounds: Rectangle; topmost: boolean; inputScale: number; displayId: number; layerVersion: number }
 interface Inspection { exists: boolean; window: { handle: string; parent: string; className: string; child: boolean; visible: boolean; minimized: boolean; topmost: boolean; dpi: number; bounds: Rectangle } | null }
 
@@ -151,7 +152,7 @@ export class DesktopController {
     finally { this.checking = false; }
   }
 
-  sync(rebuild = false): Promise<void> {
+  sync(rebuild = false, reflow = false): Promise<void> {
     const result = this.pending.then(async () => {
       if (this.stopped) return;
       if (rebuild) { await this.input.stop(); await this.releaseFocus(); this.destroyAll(); }
@@ -164,13 +165,13 @@ export class DesktopController {
       if (process.platform !== 'win32') { this.publish('桌面壁纸模式目前支持 Windows 10 / 11。'); return; }
       try {
         const wanted = new Set<string>(screen.getAllDisplays().map(d => `wallpaper:${d.id}`));
+        const visible = slots.map(slot => visibleModule(state.settings, slot));
         const activeNote = activeDesktopNote(state);
-        const notes = state.settings.showDesktopNotes === false || !activeNote ? [] : [activeNote];
+        const notes = !visible.includes('notes') || !activeNote ? [] : [activeNote];
         notes.forEach(n => wanted.add(`note:${n.id}`));
-        if (!notes.length && state.settings.showDesktopNotes !== false) wanted.add('notes-empty');
-        if (state.settings.showDesktopTasks !== false) wanted.add('tasks');
-        if (state.settings.showDesktopCalendar !== false) wanted.add('calendar');
-        if (state.settings.showDesktopSchedule !== false) wanted.add('schedule');
+        if (!notes.length && visible.includes('notes')) wanted.add('notes-empty');
+        const ordinary = visible.filter((id): id is 'tasks' | 'calendar' | 'schedule' | 'community' => id !== 'notes' && id !== null);
+        ordinary.forEach(id => wanted.add(id));
         let noteBounds: Rectangle | undefined;
         await Promise.all([...this.entries.values()].filter(entry => !wanted.has(entry.key)).map(async entry => {
           if (entry.topmost && (entry.kind === 'note' || entry.kind === 'notes-empty')) {
@@ -184,12 +185,10 @@ export class DesktopController {
           const key = `wallpaper:${display.id}`;
           if (!this.entries.has(key)) await this.create(key, 'wallpaper', display.bounds, { wallpaper: '1', display: String(display.id) });
         }
-        if (state.settings.showDesktopTasks !== false && !this.entries.has('tasks')) {
-          await this.create('tasks', 'tasks', this.widgetBounds(state.settings.topmostWidgets?.includes('tasks') ? state.settings.tasksPosition : undefined, 'tasks'), { widget: 'tasks' });
+        for (const id of ordinary) if (!this.entries.has(id)) {
+          await this.create(id, id, this.widgetBounds(state.settings.topmostWidgets?.includes(id) ? state.settings[`${id}Position`] : undefined, id), { widget: id });
         }
-        if (state.settings.showDesktopCalendar !== false && !this.entries.has('calendar')) await this.create('calendar', 'calendar', this.widgetBounds(state.settings.topmostWidgets?.includes('calendar') ? state.settings.calendarPosition : undefined, 'calendar'), { widget: 'calendar' });
-        if (state.settings.showDesktopSchedule !== false && !this.entries.has('schedule')) await this.create('schedule', 'schedule', this.widgetBounds(state.settings.topmostWidgets?.includes('schedule') ? state.settings.schedulePosition : undefined, 'schedule'), { widget: 'schedule' });
-        if (!notes.length && state.settings.showDesktopNotes !== false && !this.entries.has('notes-empty')) await this.create('notes-empty', 'notes-empty', this.widgetBounds(state.settings.topmostWidgets?.includes('notes') ? noteBounds ?? state.settings.notesPosition : undefined, 'notes'), { widget: 'notes-empty' });
+        if (!notes.length && visible.includes('notes') && !this.entries.has('notes-empty')) await this.create('notes-empty', 'notes-empty', this.widgetBounds(state.settings.topmostWidgets?.includes('notes') ? noteBounds ?? state.settings.notesPosition : undefined, 'notes'), { widget: 'notes-empty' });
         let index = 0;
         for (const note of notes) {
           if (!this.entries.has(`note:${note.id}`)) await this.create(`note:${note.id}`, 'note', this.widgetBounds(state.settings.topmostWidgets?.includes('notes') ? noteBounds ?? state.settings.notesPosition : undefined, 'notes', index), { note: note.id });
@@ -199,6 +198,18 @@ export class DesktopController {
           if (entry.kind === 'wallpaper') continue;
           const topmost = (state.settings.topmostWidgets ?? []).includes(entry.kind === 'note' || entry.kind === 'notes-empty' ? 'notes' : entry.key);
           if (entry.topmost !== topmost) await this.setLayer(entry, topmost);
+          else if (reflow && !topmost) {
+            const kind = entry.kind === 'note' || entry.kind === 'notes-empty' ? 'notes' : entry.kind;
+            const home = this.widgetBounds(undefined, kind);
+            if ((['x','y','width','height'] as const).some(k => Math.abs(entry.bounds[k] - home[k]) > 1)) {
+              entry.attached = false; entry.layerVersion++;
+              clearTimeout(this.timers.get(entry.key)); this.timers.delete(entry.key);
+              const px = screen.dipToScreenRect(null, home);
+              await this.native('position', entry.handle, String(process.pid), ...[px.x, px.y, px.width, px.height].map(Math.round).map(String));
+              entry.bounds = home; await this.normalizeScale(entry); entry.attached = true;
+              entry.win.webContents.send('desktop:surface', this.surfaceFor(entry.win.webContents));
+            }
+          }
         }
         await this.input.start();
         this.updateInputTargets();
@@ -214,9 +225,11 @@ export class DesktopController {
     return result;
   }
 
-  private widgetBounds(saved: Note['position'], kind: 'schedule' | 'calendar' | 'tasks' | 'notes', index = 0): Rectangle {
+  private widgetBounds(saved: Note['position'], kind: ModuleId, index = 0): Rectangle {
     const area = saved ? screen.getDisplayMatching(saved).workArea : screen.getPrimaryDisplay().workArea;
-    const defaults = plannerLayout(area)[kind];
+    const layout = this.getState().settings.moduleSlots ?? defaultSlots;
+    const slot = slots.find(s => layout[s] === kind) ?? 'upper';
+    const defaults = plannerLayout(area)[defaultSlots[slot]];
     const minimum = this.minimum(kind === 'notes' ? 'note' : kind);
     const width = Math.round(Math.min(Math.max(saved?.width ?? defaults.width, minimum.width), area.width));
     const height = Math.round(Math.min(Math.max(saved?.height ?? defaults.height, minimum.height), area.height));
@@ -250,7 +263,7 @@ export class DesktopController {
     win.on('close', event => {
       if (this.stopped) return;
       event.preventDefault();
-      const flag = { tasks: 'showDesktopTasks', calendar: 'showDesktopCalendar', schedule: 'showDesktopSchedule', 'notes-empty': 'showDesktopNotes' }[kind as 'tasks' | 'calendar' | 'schedule' | 'notes-empty'];
+      const flag = { tasks: 'showDesktopTasks', calendar: 'showDesktopCalendar', schedule: 'showDesktopSchedule', community: 'showDesktopCommunity', 'notes-empty': 'showDesktopNotes' }[kind as 'tasks' | 'calendar' | 'schedule' | 'community' | 'notes-empty'];
       if (!wallpaper) void this.persist(kind === 'note' ? { type: 'note:update', id: key.slice(5), changes: { pinned: false } } : { type: 'settings:update', changes: { [flag]: false } });
     });
     if (!await win.webContents.session.protocol.isProtocolHandled('wallnote')) win.webContents.session.protocol.handle('wallnote', request => session.defaultSession.fetch(request.url));
@@ -312,6 +325,7 @@ export class DesktopController {
     if (entry.kind === 'calendar') return { type: 'settings:update', changes: { calendarPosition: position } };
     if (entry.kind === 'schedule') return { type: 'settings:update', changes: { schedulePosition: position } };
     if (entry.kind === 'notes-empty') return { type: 'settings:update', changes: { notesPosition: position } };
+    if (entry.kind === 'community') return { type: 'settings:update', changes: { communityPosition: position } };
     return null;
   }
 

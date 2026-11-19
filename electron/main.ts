@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, shell, Tray, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, safeStorage, shell, Tray, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { allWallpapers, builtInWallpapers, createNote, isValidState, reduceState } from '../shared/state';
 import type { Action, AppState, DesktopCommand, Wallpaper } from '../shared/types';
 import { StateStore } from './store';
@@ -16,6 +16,9 @@ import { dateKey } from '../shared/calendar';
 import { WifiReceiver } from './wifi-receiver';
 import { ManagerMotion } from './window-motion';
 import { EventEditorWindow } from './event-editor';
+import { CommunityAssistant } from './community';
+import { itemId, itemURL } from '../shared/community';
+import { defaultSlots, modules, validSlots, type ModuleId } from '../shared/modules';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -65,6 +68,15 @@ const receiverArgs = app.isPackaged ? [] : ['-u', path.resolve(process.env.CALEN
 if (process.env.WALLNOTE_DATA_DIR && process.env.WALLNOTE_WIFI_TEST_LOOPBACK === '1') receiverArgs.push('--host', '127.0.0.1', '--discovery-port', '0');
 const wifiReceiver = new WifiReceiver(store.directory, receiverExecutable, receiverArgs, profile => phoneSync.connect(profile));
 const plannerEditor = new EventEditorWindow(() => store.state, loadWindow, secureWindow, () => quitting, path.join(assetDir, 'icon.png'));
+const community = new CommunityAssistant(path.join(store.directory, 'community'), (url, init) => net.fetch(url, init), {
+  async seal(value) {
+    if (process.platform !== 'win32' || !await safeStorage.isAsyncEncryptionAvailable()) throw new Error('系统加密存储不可用。');
+    return safeStorage.encryptStringAsync(value);
+  },
+  async unseal(bytes) { return (await safeStorage.decryptStringAsync(bytes)).result; },
+}, view => {
+  for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed() && (win === mainWindow || desktop.identify(win.webContents)?.kind === 'community')) win.webContents.send('community:changed', view);
+});
 
 function serial<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work);
@@ -143,11 +155,11 @@ function updateTray() {
       await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true, showDesktopNotes: true } }, { type: 'note:add', note }));
       await desktop.sync(); broadcast();
     }).catch(reportBackgroundError); } },
-    { label: '显示桌面待办', type: 'checkbox', checked: store.state.settings.showDesktopTasks !== false, click: item => { void serial(async () => {
-      await store.save(reduceState(store.state, { type: 'settings:update', changes: { showDesktopTasks: item.checked } }));
-      await desktop.sync(); broadcast();
-    }).catch(reportBackgroundError); } },
-    ...([['显示日历', 'showDesktopCalendar'], ['显示时间安排', 'showDesktopSchedule'], ['显示桌面便签', 'showDesktopNotes']] as const).map(([label, key]) => ({ label, type: 'checkbox' as const, checked: store.state.settings[key] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [key]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } })),
+    ...Object.values(store.state.settings.moduleSlots ?? defaultSlots).filter((id): id is ModuleId => id !== null).map(id => {
+      const { flag, name } = modules[id];
+      return { label: `显示${name}`, type: 'checkbox' as const, checked: store.state.settings[flag] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [flag]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } };
+    }),
+    { label: '社区日报与模块布局', click: () => { void controlDesktop('showCommunity').catch(reportBackgroundError); } },
     { type: 'separator' },
     { label: status.enabled ? '暂停桌面壁纸' : '启用桌面壁纸', click: () => { void controlDesktop(status.enabled ? 'disable' : 'enable').catch(reportBackgroundError); } },
     { label: '退出 WallNote', click: () => app.quit() },
@@ -157,17 +169,17 @@ function updateTray() {
 async function controlDesktop(command: DesktopCommand) {
   if (command === 'quit') { setImmediate(() => app.quit()); return desktop.getStatus(); }
   if (command === 'showManager') { showManager(); return desktop.getStatus(); }
-  if (command === 'showPhoneSync') {
+  if (command === 'showPhoneSync' || command === 'showCommunity') {
     showManager();
     const window = mainWindow;
     await managerLoaded;
-    if (window && !window.isDestroyed()) await window.webContents.executeJavaScript("location.hash = 'phone-sync'; void 0");
+    if (window && !window.isDestroyed()) await window.webContents.executeJavaScript(command === 'showPhoneSync' ? "location.hash = 'phone-sync'; void 0" : "location.hash = 'community'; void 0");
     return desktop.getStatus();
   }
   if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -207,7 +219,7 @@ function validateAction(value: unknown): asserts value is Action {
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'moduleSlots', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -216,6 +228,23 @@ function validateAction(value: unknown): asserts value is Action {
 }
 
 function installIPC(): void {
+  const fromCommunity = (event: IpcMainInvokeEvent) => {
+    trusted(event); if (event.sender !== mainWindow?.webContents && desktop.identify(event.sender)?.kind !== 'community') throw new Error('请从社区日报操作。');
+  };
+  ipcMain.handle('community:get', e => { fromCommunity(e); return community.status(); });
+  ipcMain.handle('community:configure', (e, value) => { trusted(e, true); return community.configure(value); });
+  ipcMain.handle('community:key', (e, value) => { trusted(e, true); return community.key(value); });
+  ipcMain.handle('community:run', e => { fromCommunity(e); return community.run(); });
+  ipcMain.handle('community:item', async (e, action, day, id) => {
+    fromCommunity(e); const item = community.item(day, id), url = itemURL(item);
+    if (action === 'open') return shell.openExternal(url);
+    if (action !== 'task') throw new Error('无效的日报操作。');
+    const taskId = `git-${createHash('sha256').update(itemId(item)).digest('hex').slice(0, 32)}`;
+    await serial(async () => {
+      const next = reduceState(store.state, { type: 'task:add', task: { id: taskId, text: `${item.title}\n${url}`, completed: false, priority: false, createdAt: new Date().toISOString() } });
+      if (next !== store.state) { await store.save(next); broadcast(); }
+    });
+  });
   const fromEditor = (event: Electron.IpcMainEvent | IpcMainInvokeEvent) => plannerEditor.owns(event.sender) && event.senderFrame === event.sender.mainFrame;
   ipcMain.handle('event-editor:open', async (event, request) => {
     trusted(event);
@@ -245,6 +274,7 @@ function installIPC(): void {
       if (!input.type.startsWith('event:') && input.type !== 'calendar:select' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === flag))) throw new Error('日历组件只能修改日程。');
     }
     if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
+    if (widget?.kind === 'community' && !(input.type === 'settings:update' && Object.keys(input.changes).length === 1 && input.changes.showDesktopCommunity === false)) throw new Error('日报组件只能收起当前模块。');
     }
     if (input.type === 'event:update' && phoneSync.isPhoneEvent(input.id)) return phoneSync.updatePhone(input.id, input.changes, input.expectedRevision).then(() => rendererState(event.sender));
     if (input.type === 'event:delete' && (phoneSync.isPhoneEvent(input.id) || phoneSync.isLinked(input.id))) throw new Error('此日程来自手机或已关联手机，当前版本不支持删除手机日程。');
@@ -256,13 +286,15 @@ function installIPC(): void {
         if (!supportsLaunchAtLogin) throw new Error('请在 Windows 安装版中设置登录时启动。');
         app.setLoginItemSettings({ openAtLogin: input.changes.launchAtLogin, name: 'WallNote', path: process.execPath });
       }
+      const rearrange = input.type === 'settings:update' && input.changes.moduleSlots !== undefined;
+      if (rearrange && !validSlots(next.settings.moduleSlots)) throw new Error('模块布局无效。');
       await store.save(next);
       if (input.type === 'wallpaper:delete') {
         // Imported files are app-owned copies; the original image is never removed.
         await fs.unlink(path.join(imageDir, `${input.id}.jpg`)).catch(() => undefined);
         await wallpaperCache.remove(input.id);
       }
-      await desktop.sync(); broadcast();
+      await desktop.sync(false, rearrange); broadcast();
       return rendererState(event.sender);
     });
   });
@@ -354,8 +386,8 @@ function installIPC(): void {
   ipcMain.on('desktop:manipulate-stop', event => { if (event.senderFrame === event.sender.mainFrame) desktop.finishManipulation(event.sender); });
   ipcMain.handle('desktop:control', (event, command: DesktopCommand) => {
     trusted(event);
-    if (!['enable', 'disable', 'showManager', 'showPhoneSync', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');
-    if (mainWindow?.webContents !== event.sender && command !== 'showManager' && !(command === 'showPhoneSync' && desktop.identify(event.sender)?.kind === 'calendar')) throw new Error('请通过管理面板执行此操作。');
+    if (!['enable', 'disable', 'showManager', 'showPhoneSync', 'showCommunity', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');
+    if (mainWindow?.webContents !== event.sender && command !== 'showManager' && !(command === 'showCommunity' && desktop.identify(event.sender)?.kind === 'community') && !(command === 'showPhoneSync' && desktop.identify(event.sender)?.kind === 'calendar')) throw new Error('请通过管理面板执行此操作。');
     return controlDesktop(command);
   });
   ipcMain.handle('app:dataFolder', async event => { trusted(event, true); const error = await shell.openPath(store.directory); if (error) throw new Error(error); });
@@ -414,6 +446,7 @@ if (hasLock) {
       catch { return new Response('Image unavailable', { status: 404 }); }
     });
     await phoneSync.start();
+    await community.start();
     installIPC();
     if (!process.env.WALLNOTE_DATA_DIR || process.env.WALLNOTE_ENABLE_WIFI_RECEIVER === '1') void wifiReceiver.autoStart(phoneSync.getStatus().configured);
     let renderedDay = dateKey();
@@ -440,6 +473,7 @@ if (hasLock) {
     if (rendererDayTimer) clearInterval(rendererDayTimer);
     void (async () => {
       try {
+        await community.stop();
         await wifiReceiver.stop();
         await phoneSync.stop();
         const positions = await desktop.positions();
