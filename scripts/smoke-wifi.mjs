@@ -84,6 +84,13 @@ try {
   await expect(page.locator('.calendar-panel .event-source-line')).toHaveText('手机同步');
   await page.locator('.calendar-panel').getByRole('button', { name: '编辑日程：模拟手机安排' }).click();
   await expect(page.locator('.event-phone-info')).toContainText('手机同步 · 北京时间');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  snapshot.events[0].rrule = 'FREQ=DAILY'; // Same mock event becomes a read-only series.
+  expect((await request('/api/sync', snapshot, phone.token)).status).toBe(200);
+  await page.evaluate(() => window.wallnote.phoneSyncControl('refresh'));
+  await page.locator('.calendar-panel').getByRole('button', { name: '查看日程：模拟手机安排' }).click();
+  await expect(page.getByRole('dialog', { name: '查看手机日程' }).getByLabel('日程标题')).toBeDisabled();
+  await expect(page.getByLabel('日程备注', { exact: true })).toBeDisabled();
   const oldPort = Number(new URL(profile.baseUrl).port), fingerprint = profile.certificateSha256;
   await app.close(); app = undefined;
   await expect.poll(() => listening(oldPort), { timeout: 10000 }).toBe(false);

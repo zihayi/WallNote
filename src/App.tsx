@@ -193,7 +193,7 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.6.3'}</span></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.6.4'}</span></div>
           <div className="settings-layout"><div><PhoneSettings state={state} /><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
             <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方；点击组件图钉后置顶，可移动和缩放</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>
             {([

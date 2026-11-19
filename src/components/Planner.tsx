@@ -3,7 +3,7 @@ import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Plus, Send, Sma
 import type { Action, AppState, PhoneSyncItem, ScheduleEvent } from '../../shared/types';
 import { calendarEvents, createEvent, dateKey, eventError, eventsOnDate, monthDays, parseDate, selectedDate, shiftDate, validDate } from '../../shared/calendar';
 import { emptyPhoneSync, PHONE_SYNC } from '../../shared/phone';
-import { api, errorMessage } from '../api';
+import { api, errorMessage, isDesktop } from '../api';
 import { ColorPicker } from './Notes';
 import { Modal } from './Modal';
 import { FrostedPanel } from './FrostedPanel';
@@ -19,7 +19,19 @@ function useActions() {
   return { error, setError, run };
 }
 
-export function EventEditor({ event, existing, state, onSave, onClose }: { event: ScheduleEvent; existing: boolean; state: AppState; onSave: RunAction; onClose: () => void }) {
+type EditorDraft = { event: ScheduleEvent; existing: boolean };
+function useEventDialog(desktop: boolean, onError: (message: string) => void) {
+  const [editor, inline] = useState<EditorDraft | null>(null);
+  const setEditor = (draft: EditorDraft | null) => {
+    if (!draft || !desktop || !isDesktop) { inline(draft); return; }
+    const { event, existing } = draft;
+    void api.openDesktopEventEditor(existing ? { id: event.id } : { date: event.date, hour: Number(event.start.slice(0, 2)) })
+      .then(opened => { if (!opened) inline(draft); }).catch(cause => onError(errorMessage(cause)));
+  };
+  return { editor, setEditor };
+}
+
+export function EventEditor({ event, existing, state, onSave, onClose, separateWindow = false }: EditorDraft & { state: Pick<AppState, 'phoneSync'>; onSave: RunAction; onClose: () => void; separateWindow?: boolean }) {
   const [draft, setDraft] = useState({ ...event });
   const [baseline, setBaseline] = useState({ ...event });
   const [persisted, setPersisted] = useState(existing);
@@ -35,6 +47,15 @@ export function EventEditor({ event, existing, state, onSave, onClose }: { event
   const [expectedRevision] = useState(event.phone?.revision ?? sync?.revision);
   const dirty = JSON.stringify(baseline) !== JSON.stringify(draft);
   const close = () => { if (busy) return; if (dirty) setConfirmDiscard(true); else onClose(); };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => { if (separateWindow) return api.onEditorCloseRequest(() => closeRef.current()); }, [separateWindow]);
+  const remove = async () => {
+    setBusy(true);
+    try { if (await onSave({ type: 'event:delete', id: event.id })) onClose(); else setError('删除失败，请重试。'); }
+    catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
   const save = async (send = false) => {
     if (busy || readOnly) return;
     const next = { ...draft, title: draft.title.trim(), description: draft.description.trim() };
@@ -69,7 +90,7 @@ export function EventEditor({ event, existing, state, onSave, onClose }: { event
       <label>备注<textarea aria-label="日程备注" disabled={readOnly || busy} placeholder="地点、说明等（选填）" maxLength={5000} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></label>
       {!event.phone && <div className="event-color-row"><span>颜色</span><ColorPicker label="日程颜色" value={draft.color} disabled={busy} onChange={color => setDraft({ ...draft, color })} /></div>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {confirmDelete ? <div className="event-confirm"><p>确定删除这条日程？</p><button className="button small" type="button" onClick={() => setConfirmDelete(false)}>取消</button><button className="button danger small" type="button" disabled={busy} onClick={async () => { setBusy(true); if (await onSave({ type: 'event:delete', id: event.id })) onClose(); else setError('删除失败，请重试。'); setBusy(false); }}>确认删除日程</button></div> : confirmDiscard ? <div className="event-confirm"><p>放弃尚未保存的更改？</p><button className="button small" type="button" onClick={() => setConfirmDiscard(false)}>继续编辑</button><button className="button small danger" type="button" onClick={onClose}>放弃更改</button></div> : confirmSend ? <div className="event-confirm"><p>手机端也有更新，确认用当前本地内容替换手机版本？</p><button className="button small" type="button" onClick={() => setConfirmSend(false)}>取消</button><button className="button small primary" type="button" disabled={busy} onClick={() => void save(true)}>确认发送</button></div> : <div className="event-form-footer">
+      {confirmDelete ? <div className="event-confirm"><p>确定删除这条日程？</p><button className="button small" type="button" onClick={() => setConfirmDelete(false)}>取消</button><button className="button danger small" type="button" disabled={busy} onClick={() => void remove()}>确认删除日程</button></div> : confirmDiscard ? <div className="event-confirm"><p>放弃尚未保存的更改？</p><button className="button small" type="button" onClick={() => setConfirmDiscard(false)}>继续编辑</button><button className="button small danger" type="button" onClick={onClose}>放弃更改</button></div> : confirmSend ? <div className="event-confirm"><p>手机端也有更新，确认用当前本地内容替换手机版本？</p><button className="button small" type="button" onClick={() => setConfirmSend(false)}>取消</button><button className="button small primary" type="button" disabled={busy} onClick={() => void save(true)}>确认发送</button></div> : <div className="event-form-footer">
         {persisted && !event.phone && <button type="button" className="icon-button danger-hover" aria-label="删除日程" disabled={sync?.linked} title={sync?.linked ? '已关联手机的日程暂不支持删除' : '删除日程'} onClick={() => setConfirmDelete(true)}><Trash2 size={17} /></button>}
         <button type="button" className="button" onClick={close}>{readOnly ? '关闭' : '取消'}</button>
         {!event.phone && phone.configured && <button type="button" className="button" disabled={busy || !phone.connected || (!phone.calendarId && !sync?.linked) || !!pending} onClick={() => sync?.state === 'conflict' ? setConfirmSend(true) : void save(true)}><Send size={14} />发送到手机</button>}
@@ -87,8 +108,8 @@ export function CalendarPanel({ state, desktop = false, showPhoneLink = true }: 
   const date = selectedDate(state);
   const [month, setMonth] = useState(date.slice(0, 7));
   const [now, setNow] = useState(new Date());
-  const [editor, setEditor] = useState<{ event: ScheduleEvent; existing: boolean } | null>(null);
   const { error, run, setError } = useActions();
+  const { editor, setEditor } = useEventDialog(desktop, setError);
   useEffect(() => setMonth(date.slice(0, 7)), [date]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
   const days = useMemo(() => monthDays(month), [month]);
@@ -117,8 +138,8 @@ export function CalendarPanel({ state, desktop = false, showPhoneLink = true }: 
 export function HourlySchedule({ state, desktop = false }: { state: AppState; desktop?: boolean }) {
   const date = selectedDate(state);
   const events = eventsOnDate(state, date);
-  const [editor, setEditor] = useState<{ event: ScheduleEvent; existing: boolean } | null>(null);
-  const { error, run } = useActions();
+  const { error, run, setError } = useActions();
+  const { editor, setEditor } = useEventDialog(desktop, setError);
   const scroll = useRef<HTMLDivElement>(null);
   const firstTime = events[0]?.start;
   useEffect(() => {

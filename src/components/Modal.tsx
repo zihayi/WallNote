@@ -12,6 +12,7 @@ export function Modal({ title, children, onClose, className = '' }: { title: str
     const input = ref.current?.querySelector<HTMLElement>('[data-autofocus]:not(:disabled)');
     (input ?? ref.current?.querySelector<HTMLElement>(selector))?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return; // Let the IME dismiss its own candidate list.
       if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }
       if (event.key !== 'Tab') return;
       const elements = [...(ref.current?.querySelectorAll<HTMLElement>(selector) ?? [])].filter(el => el.offsetParent !== null);

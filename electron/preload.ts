@@ -21,6 +21,10 @@ const api: WallNoteAPI = {
   phoneSyncControl: (command, calendarId) => ipcRenderer.invoke('phone:control', command, calendarId),
   wifiReceiverControl: (command, id) => ipcRenderer.invoke('wifi:control', command, id),
   sendEventToPhone: (id, expectedRevision) => ipcRenderer.invoke('phone:send', id, expectedRevision),
+  openDesktopEventEditor: request => ipcRenderer.invoke('event-editor:open', request),
+  getEventEditorData: () => ipcRenderer.invoke('event-editor:get'),
+  onEditorCloseRequest: callback => { const listener = () => callback(); ipcRenderer.on('event-editor:request-close', listener); return () => ipcRenderer.removeListener('event-editor:request-close', listener); },
+  finishEventEditor: () => ipcRenderer.send('event-editor:finish'),
   getDesktopStatus: () => ipcRenderer.invoke('desktop:status'),
   getDesktopSurface: () => ipcRenderer.invoke('desktop:surface'),
   onDesktopSurface: callback => {

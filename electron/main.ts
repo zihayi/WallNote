@@ -15,6 +15,7 @@ import { stateForView } from '../shared/renderer-state';
 import { dateKey } from '../shared/calendar';
 import { WifiReceiver } from './wifi-receiver';
 import { ManagerMotion } from './window-motion';
+import { EventEditorWindow } from './event-editor';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -63,6 +64,7 @@ const receiverExecutable = app.isPackaged ? path.join(process.resourcesPath, 'na
 const receiverArgs = app.isPackaged ? [] : ['-u', path.resolve(process.env.CALENDAR_BRIDGE_ROOT || path.join(__dirname, '..', 'receiver'), 'server.py')];
 if (process.env.WALLNOTE_DATA_DIR && process.env.WALLNOTE_WIFI_TEST_LOOPBACK === '1') receiverArgs.push('--host', '127.0.0.1', '--discovery-port', '0');
 const wifiReceiver = new WifiReceiver(store.directory, receiverExecutable, receiverArgs, profile => phoneSync.connect(profile));
+const plannerEditor = new EventEditorWindow(() => store.state, loadWindow, secureWindow, () => quitting, path.join(assetDir, 'icon.png'));
 
 function serial<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work);
@@ -184,6 +186,7 @@ function broadcast(): void {
 
 function rendererState(contents: WebContents): AppState {
   if (mainWindow?.webContents === contents) return store.state;
+  if (plannerEditor.owns(contents)) return { ...stateForView(store.state, 'wallpaper'), phoneSync: plannerEditor.phone(store.state.phoneSync) };
   const entry = desktop.identify(contents);
   return stateForView(store.state, entry?.kind ?? 'wallpaper', entry?.kind === 'note' ? entry.key.slice(5) : undefined);
 }
@@ -213,9 +216,22 @@ function validateAction(value: unknown): asserts value is Action {
 }
 
 function installIPC(): void {
+  const fromEditor = (event: Electron.IpcMainEvent | IpcMainInvokeEvent) => plannerEditor.owns(event.sender) && event.senderFrame === event.sender.mainFrame;
+  ipcMain.handle('event-editor:open', async (event, request) => {
+    trusted(event);
+    const source = desktop.identify(event.sender);
+    if (!source || (source.kind !== 'calendar' && source.kind !== 'schedule') || quitting) throw new Error('请从桌面日历或时间安排打开日程。');
+    if (source.topmost) return false; // A pinned widget already owns a normal keyboard-capable window.
+    await plannerEditor.open(request, source.bounds); return true;
+  });
+  ipcMain.handle('event-editor:get', event => { if (!fromEditor(event)) throw new Error('无权读取此日程。'); return plannerEditor.data(); });
+  ipcMain.on('event-editor:finish', event => { if (fromEditor(event)) plannerEditor.finish(); });
   ipcMain.handle('state:get', event => { trusted(event); return rendererState(event.sender); });
   ipcMain.handle('state:dispatch', (event, input: unknown) => {
-    trusted(event); validateAction(input);
+    const editor = fromEditor(event);
+    if (!editor) trusted(event);
+    validateAction(input);
+    if (editor && !plannerEditor.allows(input)) throw new Error('编辑窗口只能操作当前日程。');
     if (quitting) throw new Error('正在退出，请稍后重新打开。');
     const widget = desktop.identify(event.sender);
     if (widget?.kind === 'wallpaper') throw new Error('壁纸层为只读显示。');
@@ -316,11 +332,13 @@ function installIPC(): void {
     return wifiReceiver.control(command as 'status' | 'pair' | 'approve' | 'reject', id);
   });
   ipcMain.handle('phone:send', (event, id: string, expectedRevision?: string) => {
-    trusted(event);
+    const editor = fromEditor(event);
+    if (editor) { if (!plannerEditor.canSend(id)) throw new Error('编辑窗口只能发送当前本地日程。'); }
+    else trusted(event);
     const widget = desktop.identify(event.sender);
     if (widget && widget.kind !== 'calendar' && widget.kind !== 'schedule') throw new Error('请通过日历或时间安排发送日程。');
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id) || expectedRevision !== undefined && !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('日程参数无效。');
-    return phoneSync.sendLocal(id, expectedRevision);
+    return phoneSync.sendLocal(id, expectedRevision).then(view => editor ? plannerEditor.phone(view) : view);
   });
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });

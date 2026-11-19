@@ -114,6 +114,9 @@ export type Action =
 
 export interface AppInfo { version: string; platform: string; dataPath: string; desktop: boolean; supportsLaunchAtLogin: boolean }
 
+export type EventEditorRequest = { id: string } | { date: string; hour: number };
+export interface EventEditorData { event: ScheduleEvent; existing: boolean; phoneSync?: PhoneSyncView }
+
 export interface DesktopStatus {
   enabled: boolean;
   active: boolean;
@@ -143,6 +146,10 @@ export interface WallNoteAPI {
   phoneSyncControl(command: 'connect' | 'refresh' | 'disconnect' | 'calendar', calendarId?: string): Promise<PhoneSyncView>;
   wifiReceiverControl(command: 'status' | 'pair' | 'approve' | 'reject', id?: string): Promise<WifiReceiverView>;
   sendEventToPhone(id: string, expectedRevision?: string): Promise<PhoneSyncView>;
+  openDesktopEventEditor(request: EventEditorRequest): Promise<boolean>;
+  getEventEditorData(): Promise<EventEditorData>;
+  onEditorCloseRequest(callback: () => void): () => void;
+  finishEventEditor(): void;
   getDesktopStatus(): Promise<DesktopStatus>;
   desktopControl(command: DesktopCommand): Promise<DesktopStatus>;
   onDesktopStatus(callback: (status: DesktopStatus) => void): () => void;
