@@ -57,20 +57,28 @@ internal static class DesktopInput
         string desktopHandle = args.Length > 4 && args[args.Length - 2].StartsWith("desktop:") ? args[args.Length - 2].Substring(8) : null;
         uint hitOwner; GetWindowThreadProcessId(WindowFromPoint(new Point { X = x, Y = y }), out hitOwner);
         if (hitOwner != owner && !CanRoute(desktopHandle, owner, x, y)) throw new InvalidOperationException("Test widget is covered; expected PID " + owner + ", hit " + hitOwner + ". No input was sent.");
-        bool pressed = false;
+        bool pressed = false, right = args[0] == "right";
+        uint down = right ? 8U : 2U, up = right ? 16U : 4U;
         try {
             SetCursorPos(x, y); Thread.Sleep(120);
             GetWindowThreadProcessId(WindowFromPoint(new Point { X = x, Y = y }), out hitOwner);
             if (hitOwner != owner && !CanRoute(desktopHandle, owner, x, y)) throw new InvalidOperationException("Test widget lost visibility; input cancelled.");
             Console.WriteLine("hit=" + Describe(WindowFromPoint(new Point { X = x, Y = y })));
             if (args[0] == "wheel") { mouse_event(0x0800, 0, 0, unchecked((uint)int.Parse(args[3])), UIntPtr.Zero); Thread.Sleep(400); return; }
-            mouse_event(2, 0, 0, 0, UIntPtr.Zero); pressed = true;
+            mouse_event(down, 0, 0, 0, UIntPtr.Zero); pressed = true;
             Thread.Sleep(args[0] == "drag" ? 450 : 120); // Allow the native drag helper to acquire its initial point.
             if (args[0] == "drag") {
                 int dx = int.Parse(args[3]), dy = int.Parse(args[4]);
                 for (int i = 1; i <= 15; i++) { SetCursorPos(x + dx * i / 15, y + dy * i / 15); Thread.Sleep(30); }
             }
-            mouse_event(4, 0, 0, 0, UIntPtr.Zero); pressed = false; Thread.Sleep(350);
+            mouse_event(up, 0, 0, 0, UIntPtr.Zero); pressed = false;
+            if(args[0]=="double") {
+                Thread.Sleep(30);
+                GetWindowThreadProcessId(WindowFromPoint(new Point { X=x, Y=y }),out hitOwner);
+                if(hitOwner!=owner && !CanRoute(desktopHandle,owner,x,y))throw new InvalidOperationException("Second click cancelled: test item is covered.");
+                mouse_event(2,0,0,0,UIntPtr.Zero);pressed=true;Thread.Sleep(25);mouse_event(4,0,0,0,UIntPtr.Zero);pressed=false;
+            }
+            Thread.Sleep(350);
             if (args[0] == "type") {
                 var info = new GuiInfo { Size = Marshal.SizeOf(typeof(GuiInfo)) };
                 GetGUIThreadInfo(0, ref info);
@@ -79,6 +87,6 @@ internal static class DesktopInput
                 SendKeys.SendWait(args[3]);
             }
             Console.WriteLine("foreground=" + Describe(GetForegroundWindow()));
-        } finally { if (pressed) mouse_event(4, 0, 0, 0, UIntPtr.Zero); Thread.Sleep(200); SetCursorPos(original.X, original.Y); }
+        } finally { if (pressed) mouse_event(up, 0, 0, 0, UIntPtr.Zero); Thread.Sleep(200); SetCursorPos(original.X, original.Y); }
     }
 }

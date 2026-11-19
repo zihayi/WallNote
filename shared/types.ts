@@ -2,7 +2,7 @@ export type NoteColor = 'butter' | 'lavender' | 'mint' | 'rose' | 'sky';
 import type { CommunityView, CommunitySettings } from './community';
 import type { ModuleId, ModuleSlots } from './modules';
 import type { DockFrame, DockFrames, DragMode, Guides, LayoutDisplay } from './snap-layout';
-import type { DrawerView } from './drawer';
+import type { DrawerView, DrawerPoint, DrawerHitArea } from './drawer';
 export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings' | 'community';
 
 export interface Note {
@@ -146,6 +146,8 @@ export interface WallNoteAPI {
   getDrawer(): Promise<DrawerView>;
   refreshDrawer(): Promise<DrawerView>;
   openDrawerItem(id: string, reveal?: boolean): Promise<void>;
+  showDrawerMenu(id: string, anchor: DrawerPoint, extended: boolean): Promise<void>;
+  drawerHitAreas(areas: DrawerHitArea[]): void;
   drawerIcon(id: string): Promise<string>;
   setDrawerIcons(hide: boolean): Promise<void>;
   onDrawer(callback: (view: DrawerView) => void): () => void;

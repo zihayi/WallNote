@@ -15,17 +15,22 @@ try {
   const state=()=>panel.evaluate(()=>window.wallnote.getDrawer());
   await expect.poll(async()=>(await state()).items.length).toBe(4);
   await expect(panel.getByRole('switch',{name:'隐藏桌面图标'})).not.toBeChecked();
-  await expect(panel.getByRole('button',{name:'打开Demo.exe',exact:true})).toBeVisible();
+  await expect(panel.getByRole('button',{name:'选择Demo.exe',exact:true})).toBeVisible();
   const tabs=panel.getByRole('group',{name:'文件分类'});await tabs.getByRole('button',{name:/文档/}).evaluate(b=>b.click());
-  await expect(panel.getByRole('button',{name:'打开Report.pdf',exact:true})).toBeVisible();
+  await expect(panel.getByRole('button',{name:'选择Report.pdf',exact:true})).toBeVisible();
   await writeFile(path.join(user,'New.md'),'fixture');await expect.poll(async()=>(await state()).items.length,{timeout:7000}).toBe(5);
   await unlink(path.join(user,'New.md'));await expect.poll(async()=>(await state()).items.length,{timeout:7000}).toBe(4);
-  await tabs.getByRole('button',{name:/文件夹/}).evaluate(b=>b.click());await expect(panel.getByRole('button',{name:'打开Folder.txt'})).toBeVisible();
-  await tabs.getByRole('button',{name:/其他/}).evaluate(b=>b.click());await expect(panel.getByRole('button',{name:'打开Picture.png'})).toBeVisible();
+  await tabs.getByRole('button',{name:/文件夹/}).evaluate(b=>b.click());await expect(panel.getByRole('button',{name:'选择Folder.txt'})).toBeVisible();
+  await tabs.getByRole('button',{name:/其他/}).evaluate(b=>b.click());await expect(panel.getByRole('button',{name:'选择Picture.png'})).toBeVisible();
   expect(await panel.evaluate(async()=>{try{await window.wallnote.openDrawerItem('arbitrary/path');return false;}catch{return true;}})).toBe(true);
   // Stub the OS action on this test-owned process: nothing is actually launched.
-  await app.evaluate(({shell})=>{shell.openPath=async p=>{globalThis.__openedDrawer=p;return '';};});
-  await panel.getByRole('button',{name:'打开Picture.png'}).evaluate(b=>b.click());await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer)).toBe(path.join(user,'Picture.png'));
+  await app.evaluate(({shell})=>{globalThis.__openedDrawer=[];shell.openPath=async p=>{globalThis.__openedDrawer.push(p);return '';};});
+  const tile=panel.getByRole('button',{name:'选择Picture.png',exact:true});
+  await tile.click();await expect(tile).toHaveAttribute('aria-pressed','true');expect(await app.evaluate(()=>globalThis.__openedDrawer)).toEqual([]);
+  await tile.dblclick();await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer)).toEqual([path.join(user,'Picture.png')]);
+  await tile.focus();await panel.keyboard.press('Enter');await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer.length)).toBe(2);
+  await panel.keyboard.press('Escape');await expect(tile).toHaveAttribute('aria-pressed','false');
+  expect(await panel.evaluate(async()=>{try{await window.wallnote.showDrawerMenu('arbitrary/path',{x:.5,y:.5},false);return false;}catch{return true;}})).toBe(true);
   await panel.getByRole('button',{name:'收起文件抽屉'}).evaluate(b=>b.click());await expect.poll(()=>manager.evaluate(()=>window.wallnote.getDrawer().then(v=>v.enabled))).toBe(false);
   expect((await manager.evaluate(()=>window.wallnote.getDrawer())).items).toHaveLength(0);
   console.log('File drawer passed: native filesystem scan, four categories, watch, scoped open, hide opt-in and cleanup. Synthetic desktop only.');

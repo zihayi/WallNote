@@ -143,6 +143,7 @@ internal static class DesktopHost
         SetThreadDpiAwarenessContext(new IntPtr(-4));
         if (args.Length > 0 && args[0] == "drawer-files") return DesktopDrawer.Files(args);
         if (args.Length == 1 && args[0] == "drawer-artwork") return DrawerArtwork.Batch();
+        if (args.Length > 0 && args[0] == "drawer-menu") return DrawerContextMenu.Show(args);
         if (args.Length > 0 && (args[0] == "drawer-lease" || args[0] == "drawer-recover")) return DesktopDrawer.Lease(args);
         if (args.Length == 0 || args[0] == "probe")
         {

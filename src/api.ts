@@ -28,6 +28,8 @@ function saveState(state: AppState): AppState {
 const previewAPI: WallNoteAPI = {
   getDrawer: async()=>emptyDrawer(),refreshDrawer:async()=>emptyDrawer(),drawerIcon:async()=>'',
   openDrawerItem:async()=>{throw new Error('请在 Windows 桌面版中打开项目。');},
+  showDrawerMenu:async()=>{throw new Error('请在 Windows 桌面版使用文件菜单。');},
+  drawerHitAreas:()=>undefined,
   setDrawerIcons:async()=>{throw new Error('请在 Windows 桌面版中设置桌面图标。');},
   onDrawer:()=>()=>undefined,
   getCommunity: async () => emptyCommunity(),
@@ -54,7 +56,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.9.1', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.9.2', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));

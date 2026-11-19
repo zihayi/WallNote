@@ -22,6 +22,8 @@ internal static class DesktopInputBridge
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr message, IntPtr data);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string module);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
@@ -32,6 +34,7 @@ internal static class DesktopInputBridge
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern uint GetDoubleClickTime();
+    [DllImport("user32.dll")] private static extern int GetSystemMetricsForDpi(int index,uint dpi);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr data);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int size);
@@ -45,7 +48,8 @@ internal static class DesktopInputBridge
     [DllImport("kernel32.dll")] private static extern bool WriteProcessMemory(IntPtr process, IntPtr address, byte[] data, UIntPtr size, out UIntPtr written);
     [DllImport("kernel32.dll")] private static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] data, UIntPtr size, out UIntPtr read);
 
-    public sealed class Target { public string handle; public bool pinned; public double scale = 1; public int minWidth = 260; public int minHeight = 240; }
+    public sealed class Area { public double x, y, width, height; }
+    public sealed class Target { public string handle; public bool pinned; public double scale = 1; public int minWidth = 260; public int minHeight = 240; public Area[] rightAreas; }
     public sealed class Command { public string op; public Target[] windows; public string handle; }
     private static readonly JavaScriptSerializer Serializer = new JavaScriptSerializer();
     private static readonly BlockingCollection<object> Output = new BlockingCollection<object>();
@@ -53,13 +57,14 @@ internal static class DesktopInputBridge
     private static readonly List<Target> Targets = new List<Target>();
     private static readonly HookProc Callback = HandleMouse;
     private static uint Owner;
-    private static IntPtr Hook, Captured, Hovered, LastClick;
+    private static IntPtr Hook, Captured, RightCaptured, Hovered, LastClick;
     private static Point DownPoint, LastClickPoint;
     private static Rect DownBounds;
     private static uint LastClickTime, LastMoveTime;
     private static int ClickCount = 1;
     private static string Manipulation;
     private static volatile bool Stopping;
+    private static bool HasDrawerTiles;
     private static IconHitTester Icons;
 
     private static string ClassName(IntPtr window) { var name = new StringBuilder(128); GetClassName(window, name, name.Capacity); return name.ToString(); }
@@ -67,8 +72,16 @@ internal static class DesktopInputBridge
     private static IntPtr Handle(Target target) { long value; return long.TryParse(target.handle, out value) ? new IntPtr(value) : IntPtr.Zero; }
     private static Target FindTarget(IntPtr window) { return Targets.Find(target => Handle(target) == window); }
     private static bool DesktopAt(Point point) {
-        string cls = ClassName(WindowFromPoint(point));
-        return cls == "SysListView32" || cls == "SHELLDLL_DefView" || cls == "Progman" || cls == "WorkerW";
+        var hit = WindowFromPoint(point); string cls = ClassName(hit);
+        if (cls != "SysListView32" && cls != "SHELLDLL_DefView" && cls != "Progman" && cls != "WorkerW") return false;
+        return ShellDesktopRoot(GetAncestor(hit, 2)); // GA_ROOT
+    }
+    private static bool ShellDesktopRoot(IntPtr root) {
+        var shell = GetShellWindow();
+        if (shell == IntPtr.Zero) return false;
+        if (root == shell) return true;
+        uint shellPid, rootPid; GetWindowThreadProcessId(shell, out shellPid); GetWindowThreadProcessId(root, out rootPid);
+        return shellPid != 0 && rootPid == shellPid && ClassName(root) == "WorkerW";
     }
     private static bool Inside(Rect rect, Point point, double scale) {
         if (point.X < rect.Left || point.Y < rect.Top || point.X >= rect.Right || point.Y >= rect.Bottom) return false;
@@ -82,9 +95,10 @@ internal static class DesktopInputBridge
     private sealed class IconHitTester : IDisposable {
         private IntPtr list, process, buffer;
         private void Resolve() {
-            if (IsWindow(list) && ClassName(list) == "SysListView32") return;
+            if (IsWindow(list) && ClassName(list) == "SysListView32" && ShellDesktopRoot(GetAncestor(list,2))) return;
             Dispose();
             EnumWindows(delegate(IntPtr window, IntPtr unused) {
+                if (!ShellDesktopRoot(window)) return true;
                 IntPtr view = FindWindowEx(window, IntPtr.Zero, "SHELLDLL_DefView", null);
                 if (view != IntPtr.Zero) list = FindWindowEx(view, IntPtr.Zero, "SysListView32", null);
                 return list == IntPtr.Zero;
@@ -138,15 +152,16 @@ internal static class DesktopInputBridge
     }
     public static object IconRectangles() { SetThreadDpiAwarenessContext(new IntPtr(-4)); using (var icons = new IconHitTester()) return icons.Rectangles(); }
 
-    private static void Emit(IntPtr target, string type, MouseData data, bool down, int delta) {
+    private static void Emit(IntPtr target, string type, MouseData data, bool down, int delta, bool right = false) {
         Rect rect; if (!GetWindowRect(target, out rect)) return;
-        Output.Add(new { handle = target.ToInt64().ToString(), type = type, x = data.Point.X - rect.Left, y = data.Point.Y - rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top, leftDown = down, alt = (GetAsyncKeyState(0x12) & 0x8000) != 0, delta = delta, clickCount = ClickCount });
+        Output.Add(new { handle = target.ToInt64().ToString(), type = type, x = data.Point.X - rect.Left, y = data.Point.Y - rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top, button = right ? "right" : "left", leftDown = down, rightDown = right && type == "down", alt = (GetAsyncKeyState(0x12) & 0x8000) != 0, shift = (GetAsyncKeyState(0x10) & 0x8000) != 0, delta = delta, clickCount = right ? 1 : ClickCount });
     }
 
     private static IntPtr HandleMouse(int code, IntPtr message, IntPtr address) {
-        if (code < 0 || Targets.Count == 0) return CallNextHookEx(Hook, code, message, address);
+        if (code < 0 || (Targets.Count == 0 && RightCaptured == IntPtr.Zero)) return CallNextHookEx(Hook, code, message, address);
         uint type = (uint)message.ToInt64();
-        if (type != 0x0200 && type != 0x0201 && type != 0x0202 && type != 0x020A) return CallNextHookEx(Hook, code, message, address);
+        if ((type==0x0204 && !HasDrawerTiles) || (type==0x0205 && RightCaptured==IntPtr.Zero)) return CallNextHookEx(Hook, code, message, address);
+        if (type != 0x0200 && type != 0x0201 && type != 0x0202 && type != 0x0204 && type != 0x0205 && type != 0x020A) return CallNextHookEx(Hook, code, message, address);
         // MSLLHOOKSTRUCT.pt is in physical screen pixels. Windows can enter a low-level
         // callback in a different DPI context than Run(), virtualizing GetWindowRect
         // and ScreenToClient. Keep hit testing, icon priority and emitted offsets in
@@ -160,6 +175,7 @@ internal static class DesktopInputBridge
     private static bool RouteMouse(uint type, IntPtr address) {
         try {
             var data = (MouseData)Marshal.PtrToStructure(address, typeof(MouseData));
+            if(type == 0x0204 || type == 0x0205) return DrawerRightButton(type, data);
             Target target = FindTarget(Captured);
             if (target == null || !Owned(Captured)) { Captured = IntPtr.Zero; Manipulation = null; target = null; }
             if (target == null && type != 0x0202) {
@@ -177,6 +193,7 @@ internal static class DesktopInputBridge
                 }
             }
             if (target == null) {
+                if(type==0x0201)LastClick=IntPtr.Zero;
                 if (Hovered != IntPtr.Zero && Owned(Hovered)) Emit(Hovered, "leave", data, false, 0);
                 Hovered = IntPtr.Zero;
                 return false;
@@ -184,7 +201,8 @@ internal static class DesktopInputBridge
             IntPtr handle = Handle(target);
             if (type == 0x0201) {
                 Captured = handle; DownPoint = data.Point; GetWindowRect(handle, out DownBounds);
-                ClickCount = LastClick == handle && data.Time - LastClickTime <= GetDoubleClickTime() && Math.Abs(data.Point.X - LastClickPoint.X) < 5 && Math.Abs(data.Point.Y - LastClickPoint.Y) < 5 ? 2 : 1;
+                uint dpi=(uint)Math.Round(target.scale*96);
+                ClickCount = LastClick == handle && ClickCount == 1 && data.Time - LastClickTime <= GetDoubleClickTime() && Math.Abs(data.Point.X - LastClickPoint.X) <= GetSystemMetricsForDpi(36,dpi)/2 && Math.Abs(data.Point.Y - LastClickPoint.Y) <= GetSystemMetricsForDpi(37,dpi)/2 ? 2 : 1;
                 LastClick = handle; LastClickTime = data.Time; LastClickPoint = data.Point;
             }
             if (type == 0x0200 && Captured != IntPtr.Zero && Manipulation != null) {
@@ -209,6 +227,31 @@ internal static class DesktopInputBridge
         } catch { return false; } // On failure, leave the event to Windows.
     }
 
+    // Only right presses over published drawer tiles are ours. Leave the desktop
+    // background, other widgets, menus, other applications and real Explorer icons alone.
+    private static bool DrawerRightButton(uint type, MouseData data) {
+        if(type==0x0205) {
+            var h=RightCaptured;RightCaptured=IntPtr.Zero;
+            if(h==IntPtr.Zero)return false;
+            if(Owned(h) && FindTarget(h)!=null) Emit(h,"up",data,false,0,true);
+            return true; // Consume the matching release even if that tile has just gone away.
+        }
+        RightCaptured=IntPtr.Zero;LastClick=IntPtr.Zero;
+        if(Captured!=IntPtr.Zero || !DesktopAt(data.Point))return false;
+        for(int i=Targets.Count-1;i>=0;i--){
+            var t=Targets[i];IntPtr h=Handle(t);Rect r;
+            if(t.pinned || !Owned(h) || !IsWindowVisible(h) || !GetWindowRect(h,out r) || !Inside(r,data.Point,t.scale))continue;
+            if(t.rightAreas==null || t.rightAreas.Length==0) return false;
+            double x=(double)(data.Point.X-r.Left)/(r.Right-r.Left), y=(double)(data.Point.Y-r.Top)/(r.Bottom-r.Top);
+            foreach(var a in t.rightAreas) if(x>=a.x && x<a.x+a.width && y>=a.y && y<a.y+a.height){
+                if(Icons.Hit(data.Point))return false;
+                RightCaptured=h;Emit(h,"down",data,false,0,true);return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
     public static int Run(uint owner) {
         Owner = owner; SetThreadDpiAwarenessContext(new IntPtr(-4)); Icons = new IconHitTester();
         var writer = new Thread(delegate() { foreach (var item in Output.GetConsumingEnumerable()) { try { Console.WriteLine(Serializer.Serialize(item)); } catch { Stopping = true; break; } } }) { IsBackground = true };
@@ -228,6 +271,7 @@ internal static class DesktopInputBridge
                 if (command.op == "targets") {
                     Targets.Clear();
                     if (command.windows != null) foreach (var target in command.windows) if (Owned(Handle(target))) Targets.Add(target);
+                    HasDrawerTiles=Targets.Exists(t=>t.rightAreas!=null && t.rightAreas.Length!=0);
                     if (FindTarget(Captured) == null) { Captured = IntPtr.Zero; Manipulation = null; }
                 } else if (command.op == "stop" && Captured.ToInt64().ToString() == command.handle) Manipulation = null;
                 else if ((command.op == "move" || command.op == "resize") && Captured.ToInt64().ToString() == command.handle) Manipulation = command.op;

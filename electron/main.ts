@@ -24,6 +24,8 @@ import { layoutDisplays } from './snap-gesture';
 import { FileDrawer, type DrawerRoot } from './file-drawer';
 import { DrawerIconLease } from './drawer-icon-lease';
 import { DrawerArtworkLoader } from './drawer-artwork';
+import { DrawerMenu } from './drawer-menu';
+import { isDrawerPoint, validDrawerAreas } from '../shared/drawer';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -91,6 +93,7 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
 
 const isolatedDrawer = !!process.env.WALLNOTE_DATA_DIR;
 const drawerArtwork = new DrawerArtworkLoader(desktop.executable);
+const drawerMenu = new DrawerMenu(desktop.executable);
 const drawerLease = new DrawerIconLease(desktop.executable, state => drawer.setIconState(state), isolatedDrawer);
 const drawer: FileDrawer = new FileDrawer({
   scan: () => desktop.native<DrawerRoot[]>('drawer-files', ...(isolatedDrawer ? ['user','public'].map(n=>path.join(store.directory,'drawer-fixture',n)) : [])),
@@ -255,6 +258,17 @@ function installIPC(): void {
   ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh(true);});
   ipcMain.handle('drawer:icon',(e,id)=>{fromDrawer(e);return drawer.icon(id);});
   ipcMain.handle('drawer:open',(e,id,reveal)=>{fromDrawer(e);return drawer.open(id,reveal===true);});
+  ipcMain.handle('drawer:menu',async(e,id,anchor,extended)=>{
+    fromDrawer(e);
+    if(quitting || !isDrawerPoint(anchor) || typeof extended!=='boolean')throw new Error('无效的菜单位置。');
+    const win=BrowserWindow.fromWebContents(e.sender);
+    if(!win || win.isDestroyed())throw new Error('抽屉窗口已关闭。');
+    const file=await drawer.currentFile(id);
+    await drawerMenu.show(win,desktop.surfaceFor(e.sender),file,anchor,extended);
+  });
+  ipcMain.on('drawer:hit-areas',(e,areas)=>{
+    if(e.senderFrame===e.sender.mainFrame && desktop.identify(e.sender)?.kind==='drawer' && validDrawerAreas(areas))desktop.setDrawerAreas(e.sender,areas);
+  });
   ipcMain.handle('drawer:icons',(e,hide)=>{
     fromDrawer(e);if(typeof hide!=='boolean')throw new Error('设置无效。');
     return serial(async()=>{

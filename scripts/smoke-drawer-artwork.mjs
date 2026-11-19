@@ -35,7 +35,7 @@ try {
   const panel=app.windows().find(w=>w.url().includes('widget=drawer'));
   await panel.evaluate(()=>window.wallnote.refreshDrawer());
   async function pixels(name) {
-    const tile = panel.getByRole('button',{name:`打开${name}`,exact:true});
+    const tile = panel.getByRole('button',{name:`选择${name}`,exact:true});
     await expect(tile).toBeVisible();
     const image = tile.locator('img'); await expect(image).toBeVisible({timeout:10000});
     return image.evaluate(async el=>{await el.decode();const c=document.createElement('canvas');c.width=c.height=1;const ctx=c.getContext('2d');ctx.drawImage(el,Math.floor(el.naturalWidth/2),Math.floor(el.naturalHeight/2),1,1,0,0,1,1);return [...ctx.getImageData(0,0,1,1).data];});
@@ -44,7 +44,7 @@ try {
   console.log('Synthetic shortcut center pixels:',JSON.stringify(actual));
   for(const [name,c] of Object.entries(colors))expect(actual[name]).toEqual([...c,255]);
   expect(await pixels('Game')).toEqual([...colors.Jade,255]);
-  const fallback = panel.getByRole('button',{name:'打开DefaultApp',exact:true}).locator('img');
+  const fallback = panel.getByRole('button',{name:'选择DefaultApp',exact:true}).locator('img');
   await expect(fallback).toBeVisible(); expect(await fallback.evaluate(async img=>{await img.decode();return img.naturalWidth;})).toBe(64);
   // Same item ID: replacing a .lnk and refreshing must repaint an already-mounted tile.
   expect(await writeShortcut('Coral',iconPath('Jade'))).toBe(true);

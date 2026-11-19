@@ -1,10 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { DrawerHitArea } from '../shared/drawer';
 
 export interface MousePacket {
   handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave';
-  x: number; y: number; width: number; height: number; delta: number; clickCount: number; leftDown: boolean; alt?: boolean;
+  x: number; y: number; width: number; height: number; delta: number; clickCount: number; leftDown: boolean; rightDown?: boolean; button?: 'left'|'right'; alt?: boolean; shift?: boolean;
 }
-export interface InputTarget { handle: string; pinned: boolean; scale: number; minWidth: number; minHeight: number }
+export interface InputTarget { handle: string; pinned: boolean; scale: number; minWidth: number; minHeight: number; rightAreas?: DrawerHitArea[] }
 
 export class DesktopInputBridge {
   private child: ChildProcessWithoutNullStreams | null = null;

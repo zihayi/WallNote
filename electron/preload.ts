@@ -8,6 +8,8 @@ const api: WallNoteAPI = {
   getDrawer: () => ipcRenderer.invoke('drawer:get'),
   refreshDrawer: () => ipcRenderer.invoke('drawer:refresh'),
   openDrawerItem: (id,reveal=false) => ipcRenderer.invoke('drawer:open',id,reveal),
+  showDrawerMenu: (id,anchor,extended) => ipcRenderer.invoke('drawer:menu',id,anchor,extended),
+  drawerHitAreas: areas => ipcRenderer.send('drawer:hit-areas',areas),
   drawerIcon: id => ipcRenderer.invoke('drawer:icon',id),
   setDrawerIcons: hide => ipcRenderer.invoke('drawer:icons',hide),
   onDrawer: callback => { const listener = (_e:Electron.IpcRendererEvent,view:Parameters<typeof callback>[0])=>callback(view);ipcRenderer.on('drawer:changed',listener);return()=>ipcRenderer.removeListener('drawer:changed',listener); },

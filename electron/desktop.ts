@@ -9,6 +9,7 @@ import { layoutDisplays, startSnapGesture } from './snap-gesture';
 import { DesktopInputBridge, type MousePacket } from './input-bridge';
 import { activeDesktopNote } from '../shared/state';
 import { finishWidgetExit } from './window-motion';
+import type { DrawerHitArea } from '../shared/drawer';
 
 const execute = promisify(execFile);
 type Kind = 'wallpaper' | 'note' | 'notes-empty' | Exclude<ModuleId,'notes'>;
@@ -26,6 +27,7 @@ export class DesktopController {
   private status: DesktopStatus = { enabled: false, active: false, displays: 0, widgets: 0, error: null };
   readonly executable = app.isPackaged ? path.join(process.resourcesPath, 'native', 'WallNote.DesktopHost.exe') : path.join(__dirname, '..', 'dist-native', 'WallNote.DesktopHost.exe');
   private input: DesktopInputBridge;
+  private drawerAreas: DrawerHitArea[] = [];
   private inputQueue: Promise<unknown> = Promise.resolve();
   private lastFocus = { handle: '', at: 0 };
   private manipulations = new Map<string, ReturnType<typeof startSnapGesture>>();
@@ -102,8 +104,12 @@ export class DesktopController {
     if (!entry.win.isDestroyed()) entry.win.webContents.focus();
   }
   private minimum(kind: Kind) { return minimum(kind==='note'||kind==='notes-empty'||kind==='wallpaper'?'notes':kind); }
+  setDrawerAreas(contents: WebContents, areas: DrawerHitArea[]) {
+    if (this.identify(contents)?.kind !== 'drawer') return;
+    this.drawerAreas=areas; this.updateInputTargets();
+  }
   private updateInputTargets() {
-    this.input.setTargets([...this.entries.values()].filter(entry => entry.kind !== 'wallpaper' && !entry.topmost && entry.attached && !entry.win.isDestroyed()).map(entry => ({ handle: entry.handle, pinned: false, scale: screen.getDisplayMatching(entry.bounds).scaleFactor, minWidth: this.minimum(entry.kind).width, minHeight: this.minimum(entry.kind).height })));
+    this.input.setTargets([...this.entries.values()].filter(entry => entry.kind !== 'wallpaper' && !entry.topmost && entry.attached && !entry.win.isDestroyed()).map(entry => ({ handle: entry.handle, pinned: false, scale: screen.getDisplayMatching(entry.bounds).scaleFactor, minWidth: this.minimum(entry.kind).width, minHeight: this.minimum(entry.kind).height, rightAreas: entry.kind==='drawer'?this.drawerAreas:undefined })));
   }
   private async forwardMouse(packet: MousePacket) {
     const entry = [...this.entries.values()].find(item => item.handle === packet.handle);
@@ -114,11 +120,13 @@ export class DesktopController {
     }
     const x = Math.round(packet.x / entry.inputScale), y = Math.round(packet.y / entry.inputScale);
     const modifiers: Electron.MouseInputEvent['modifiers'] = packet.leftDown ? ['leftbuttondown'] : [];
+    if(packet.rightDown)modifiers.push('rightbuttondown');
+    if(packet.shift)modifiers.push('shift');
     if(packet.alt)modifiers.push('alt');
     if (packet.type === 'wheel') entry.win.webContents.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: 0, deltaY: packet.delta / 120 * 70, canScroll: true, hasPreciseScrollingDeltas: true });
-    else if (packet.type === 'down' || packet.type === 'up') entry.win.webContents.sendInputEvent({ type: packet.type === 'down' ? 'mouseDown' : 'mouseUp', x, y, button: 'left', clickCount: packet.clickCount, modifiers });
+    else if (packet.type === 'down' || packet.type === 'up') entry.win.webContents.sendInputEvent({ type: packet.type === 'down' ? 'mouseDown' : 'mouseUp', x, y, button: packet.button==='right'?'right':'left', clickCount: packet.clickCount, modifiers });
     else entry.win.webContents.sendInputEvent({ type: packet.type === 'leave' ? 'mouseLeave' : 'mouseMove', x, y, modifiers });
-    if (packet.type === 'up') this.manipulations.get(entry.handle)?.finish(false);
+    if (packet.type === 'up' && packet.button!=='right') this.manipulations.get(entry.handle)?.finish(false);
   }
   private async normalizeScale(entry: Entry) {
     if (entry.win.isDestroyed()) return;
@@ -368,7 +376,7 @@ export class DesktopController {
     return actions.filter((action): action is Action => action !== null);
   }
   private destroy(entry: Entry) {
-    if(entry.kind==='drawer')this.onDrawerSurface?.(null);
+    if(entry.kind==='drawer'){this.drawerAreas=[];this.onDrawerSurface?.(null);}
     entry.attached = false; entry.layerVersion++;
     this.interrupt(entry);
     const timer = this.timers.get(entry.key);
