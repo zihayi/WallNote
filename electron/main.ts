@@ -23,6 +23,7 @@ import { assignedModules, dragModes, validFrames, validModuleList } from '../sha
 import { layoutDisplays } from './snap-gesture';
 import { FileDrawer, type DrawerRoot } from './file-drawer';
 import { DrawerIconLease } from './drawer-icon-lease';
+import { DrawerArtworkLoader } from './drawer-artwork';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -89,12 +90,13 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
 }
 
 const isolatedDrawer = !!process.env.WALLNOTE_DATA_DIR;
+const drawerArtwork = new DrawerArtworkLoader(desktop.executable);
 const drawerLease = new DrawerIconLease(desktop.executable, state => drawer.setIconState(state), isolatedDrawer);
 const drawer: FileDrawer = new FileDrawer({
   scan: () => desktop.native<DrawerRoot[]>('drawer-files', ...(isolatedDrawer ? ['user','public'].map(n=>path.join(store.directory,'drawer-fixture',n)) : [])),
-  shortcut: file => shell.readShortcutLink(file).target,
+  shortcut: file => shell.readShortcutLink(file),
   launch: file => shell.openPath(file), reveal: file => shell.showItemInFolder(file),
-  icon: async file => (await app.getFileIcon(file,{size:'normal'})).toDataURL(),
+  icon: source => drawerArtwork.load(source), clearIcons: () => drawerArtwork.clear(),
   lease: handle => drawerLease.set(handle),
 }, view => {
   for(const win of BrowserWindow.getAllWindows()) if(!win.isDestroyed() && (win===mainWindow || desktop.identify(win.webContents)?.kind==='drawer')) win.webContents.send('drawer:changed',view);
@@ -250,7 +252,7 @@ function validateAction(value: unknown): asserts value is Action {
 function installIPC(): void {
   const fromDrawer=(e:IpcMainInvokeEvent)=>{trusted(e);if(e.sender!==mainWindow?.webContents&&desktop.identify(e.sender)?.kind!=='drawer')throw new Error('请在文件抽屉中操作。');};
   ipcMain.handle('drawer:get',e=>{fromDrawer(e);return drawer.status();});
-  ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh();});
+  ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh(true);});
   ipcMain.handle('drawer:icon',(e,id)=>{fromDrawer(e);return drawer.icon(id);});
   ipcMain.handle('drawer:open',(e,id,reveal)=>{fromDrawer(e);return drawer.open(id,reveal===true);});
   ipcMain.handle('drawer:icons',(e,hide)=>{

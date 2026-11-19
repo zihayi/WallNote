@@ -34,4 +34,17 @@ describe('desktop file drawer',()=>{
     expect(reduceState(hidden,{type:'layout:apply',ids:['calendar'],frames:{}}).settings.hideIconsWithDrawer).toBe(false);
     expect(reduceState(hidden,{type:'settings:update',changes:{showDesktopDrawer:false}}).settings.hideIconsWithDrawer).toBe(false);
   });
+  it('shares in-flight icons, retries a miss, and prevents stale results overwriting newer artwork',async()=>{
+    await fs.mkdir('test-results',{recursive:true});const root=await fs.mkdtemp(path.resolve('test-results','drawer-icon-'));dirs.push(root);
+    let stamp='1', finish:(value:string)=>void=()=>{};
+    const icon=vi.fn<()=>Promise<string>>().mockResolvedValueOnce('').mockImplementationOnce(()=>new Promise(r=>{finish=r;})).mockResolvedValue('new-art');
+    const d=new FileDrawer({scan:async()=>[{root,origin:'user',ok:true,truncated:false,entries:[{name:'A.lnk',directory:false,stamp}]}],shortcut:()=>({target:'sample.exe',icon:'private-icon.dll',iconIndex:3}),launch:async()=>'',reveal:()=>{},icon,lease:()=>{}},()=>{});drawers.push(d);
+    d.surface('42',false);await d.refresh();const item=d.status().items[0],id=item.id;
+    expect(await d.icon(id)).toBe('');await d.refresh();expect(d.status().items[0].iconVersion).not.toBe(item.iconVersion);
+    const slow=d.icon(id);expect(d.icon(id)).toBe(slow);stamp='2';await d.refresh();
+    expect(await d.icon(id)).toBe('new-art');finish('old-art');expect(await slow).toBe('');
+    const version=d.status().items[0].iconVersion;await d.refresh();expect(d.status().items[0].iconVersion).toBe(version);
+    expect(await d.icon(id)).toBe('new-art');expect(icon).toHaveBeenCalledTimes(3);await d.refresh(true);expect(d.status().items[0].iconVersion).not.toBe(version);
+    expect(JSON.stringify(d.status())).not.toContain('private-icon.dll');
+  });
 });

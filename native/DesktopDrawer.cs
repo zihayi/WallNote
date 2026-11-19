@@ -22,7 +22,7 @@ internal static class DesktopDrawer {
                     if (name.StartsWith(".") || name.StartsWith("~$") || name.Equals("desktop.ini",StringComparison.OrdinalIgnoreCase) || name.Equals("thumbs.db",StringComparison.OrdinalIgnoreCase)) continue;
                     var attr=file.Attributes; if ((attr & (FileAttributes.Hidden|FileAttributes.System))!=0) continue;
                     if(entries.Count>=2000) { truncated=true; break; }
-                    entries.Add(new { name=name, directory=(attr & FileAttributes.Directory)!=0 });
+                    entries.Add(new { name=name, directory=(attr & FileAttributes.Directory)!=0, stamp=file.LastWriteTimeUtc.Ticks.ToString("x") });
                 }
             } catch (DirectoryNotFoundException) { if(i==0)ok=false; }
               catch (IOException) { ok=false; } catch(UnauthorizedAccessException) {ok=false;}

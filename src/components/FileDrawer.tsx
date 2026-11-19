@@ -13,12 +13,12 @@ function FileTile({item,open}:{item:DrawerItem;open:(id:string,reveal:boolean)=>
   const [icon,setIcon]=useState(''), ref=useRef<HTMLButtonElement>(null);
   useEffect(()=>{
     let live=true;const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){
-      observer.disconnect();void api.drawerIcon(item.id).then(v=>{if(live&&v.startsWith('data:image/png;base64,'))setIcon(v);}).catch(()=>undefined);
-    }});
+      observer.disconnect();void api.drawerIcon(item.id).then(v=>{if(live)setIcon(v.startsWith('data:image/png;base64,')?v:'');}).catch(()=>{if(live)setIcon('');});
+    }},{root:ref.current?.closest('.drawer-list')??null,rootMargin:'32px'});
     if(ref.current)observer.observe(ref.current);return()=>{live=false;observer.disconnect();};
-  },[item.id]);
+  },[item.id,item.iconVersion]);
   const Icon=icons[item.category];return <div className="drawer-cell"><button type="button" className="drawer-tile" ref={ref} aria-label={`打开${item.name}`} title={`${item.name} · ${item.origin==='public'?'公共桌面':'个人桌面'}`} onClick={()=>open(item.id,false)}>
-    <span className="drawer-glyph">{icon?<img src={icon} alt="" draggable={false}/>:<Icon size={25}/>}</span><span>{item.name}</span></button><button className="drawer-reveal" aria-label={`定位${item.name}`} title="在文件资源管理器中显示" onClick={()=>open(item.id,true)}><FolderOpen size={13}/></button></div>;
+    <span className="drawer-glyph">{icon?<img src={icon} alt="" draggable={false} onError={()=>setIcon('')}/>:<Icon size={25}/>}</span><span>{item.name}</span></button><button className="drawer-reveal" aria-label={`定位${item.name}`} title="在文件资源管理器中显示" onClick={()=>open(item.id,true)}><FolderOpen size={13}/></button></div>;
 }
 
 export function FileDrawerPanel({state,desktop=false}:{state:AppState;desktop?:boolean}) {
