@@ -21,6 +21,8 @@ import { itemId, itemURL } from '../shared/community';
 import { modules, validSlots } from '../shared/modules';
 import { assignedModules, dragModes, validFrames, validModuleList } from '../shared/snap-layout';
 import { layoutDisplays } from './snap-gesture';
+import { FileDrawer, type DrawerRoot } from './file-drawer';
+import { DrawerIconLease } from './drawer-icon-lease';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -85,6 +87,19 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
   queue = result.catch(() => undefined);
   return result;
 }
+
+const isolatedDrawer = !!process.env.WALLNOTE_DATA_DIR;
+const drawerLease = new DrawerIconLease(desktop.executable, state => drawer.setIconState(state), isolatedDrawer);
+const drawer: FileDrawer = new FileDrawer({
+  scan: () => desktop.native<DrawerRoot[]>('drawer-files', ...(isolatedDrawer ? ['user','public'].map(n=>path.join(store.directory,'drawer-fixture',n)) : [])),
+  shortcut: file => shell.readShortcutLink(file).target,
+  launch: file => shell.openPath(file), reveal: file => shell.showItemInFolder(file),
+  icon: async file => (await app.getFileIcon(file,{size:'normal'})).toDataURL(),
+  lease: handle => drawerLease.set(handle),
+}, view => {
+  for(const win of BrowserWindow.getAllWindows()) if(!win.isDestroyed() && (win===mainWindow || desktop.identify(win.webContents)?.kind==='drawer')) win.webContents.send('drawer:changed',view);
+});
+desktop.onDrawerSurface = handle => drawer.surface(quitting ? null : handle, store.state.settings.hideIconsWithDrawer===true);
 
 function wallpaperPath(wallpaper: Wallpaper): string {
   return builtInWallpapers.some(w => w.id === wallpaper.id)
@@ -162,6 +177,7 @@ function updateTray() {
       return { label: `显示${name}`, type: 'checkbox' as const, checked: store.state.settings[flag] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [flag]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } };
     }),
     { label: '社区日报与模块布局', click: () => { void controlDesktop('showCommunity').catch(reportBackgroundError); } },
+    ...(store.state.settings.hideIconsWithDrawer ? [{label:'取消文件抽屉隐藏桌面图标',click:()=>{void serial(async()=>{await store.save(reduceState(store.state,{type:'settings:update',changes:{hideIconsWithDrawer:false}}));drawer.surface(desktop.drawerHandle(),false);broadcast();}).catch(reportBackgroundError);}}] : []),
     { type: 'separator' },
     { label: status.enabled ? '暂停桌面壁纸' : '启用桌面壁纸', click: () => { void controlDesktop(status.enabled ? 'disable' : 'enable').catch(reportBackgroundError); } },
     { label: '退出 WallNote', click: () => app.quit() },
@@ -181,7 +197,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined, drawerPosition: undefined } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -223,7 +239,7 @@ function validateAction(value: unknown): asserts value is Action {
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'moduleSlots', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'showDesktopDrawer', 'moduleSlots', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -232,6 +248,19 @@ function validateAction(value: unknown): asserts value is Action {
 }
 
 function installIPC(): void {
+  const fromDrawer=(e:IpcMainInvokeEvent)=>{trusted(e);if(e.sender!==mainWindow?.webContents&&desktop.identify(e.sender)?.kind!=='drawer')throw new Error('请在文件抽屉中操作。');};
+  ipcMain.handle('drawer:get',e=>{fromDrawer(e);return drawer.status();});
+  ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh();});
+  ipcMain.handle('drawer:icon',(e,id)=>{fromDrawer(e);return drawer.icon(id);});
+  ipcMain.handle('drawer:open',(e,id,reveal)=>{fromDrawer(e);return drawer.open(id,reveal===true);});
+  ipcMain.handle('drawer:icons',(e,hide)=>{
+    fromDrawer(e);if(typeof hide!=='boolean')throw new Error('设置无效。');
+    return serial(async()=>{
+      if(quitting || hide && (!desktop.drawerHandle() || !drawer.canHide()))throw new Error('请先开启可用的桌面文件抽屉。');
+      await store.save(reduceState(store.state,{type:'settings:update',changes:{hideIconsWithDrawer:hide}}));
+      drawer.surface(desktop.drawerHandle(),hide);broadcast();
+    });
+  });
   const fromCommunity = (event: IpcMainInvokeEvent) => {
     trusted(event); if (event.sender !== mainWindow?.webContents && desktop.identify(event.sender)?.kind !== 'community') throw new Error('请从社区日报操作。');
   };
@@ -280,6 +309,7 @@ function installIPC(): void {
     }
     if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
     if (widget?.kind === 'community' && !(input.type === 'settings:update' && Object.keys(input.changes).length === 1 && input.changes.showDesktopCommunity === false)) throw new Error('日报组件只能收起当前模块。');
+    if (widget?.kind === 'drawer' && !(input.type === 'settings:update' && Object.keys(input.changes).length === 1 && input.changes.showDesktopDrawer === false)) throw new Error('文件抽屉只能收起当前模块。');
     }
     if (input.type === 'event:update' && phoneSync.isPhoneEvent(input.id)) return phoneSync.updatePhone(input.id, input.changes, input.expectedRevision).then(() => rendererState(event.sender));
     if (input.type === 'event:delete' && (phoneSync.isPhoneEvent(input.id) || phoneSync.isLinked(input.id))) throw new Error('此日程来自手机或已关联手机，当前版本不支持删除手机日程。');
@@ -454,6 +484,7 @@ if (hasLock) {
     });
     await phoneSync.start();
     await community.start();
+    if (process.platform==='win32' && !isolatedDrawer) await desktop.native('drawer-recover').catch(()=>undefined);
     installIPC();
     if (!process.env.WALLNOTE_DATA_DIR || process.env.WALLNOTE_ENABLE_WIFI_RECEIVER === '1') void wifiReceiver.autoStart(phoneSync.getStatus().configured);
     let renderedDay = dateKey();
@@ -480,6 +511,7 @@ if (hasLock) {
     if (rendererDayTimer) clearInterval(rendererDayTimer);
     void (async () => {
       try {
+        drawer.surface(null,false);await drawerLease.stop();
         await community.stop();
         await wifiReceiver.stop();
         await phoneSync.stop();

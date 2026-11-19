@@ -8,6 +8,7 @@ export const modules = {
   tasks: { name: '待办', flag: 'showDesktopTasks', tall: false },
   notes: { name: '便签', flag: 'showDesktopNotes', tall: false },
   community: { name: '社区日报', flag: 'showDesktopCommunity', tall: false },
+  drawer: { name: '文件抽屉', flag: 'showDesktopDrawer', tall: false },
 } as const;
 export type ModuleId = keyof typeof modules;
 export type ModuleSlots = Record<Slot, ModuleId | null>;

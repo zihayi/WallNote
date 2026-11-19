@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import type { Action, AppState, DesktopStatus, DesktopSurface, Note } from '../shared/types';
-import type { ModuleId } from '../shared/modules';
+import { modules, type ModuleId } from '../shared/modules';
 import { fitRect, minimum, moduleHome, shownModules, toFrame, type DragMode, type Guides } from '../shared/snap-layout';
 import { layoutDisplays, startSnapGesture } from './snap-gesture';
 import { DesktopInputBridge, type MousePacket } from './input-bridge';
@@ -11,7 +11,7 @@ import { activeDesktopNote } from '../shared/state';
 import { finishWidgetExit } from './window-motion';
 
 const execute = promisify(execFile);
-type Kind = 'wallpaper' | 'note' | 'tasks' | 'calendar' | 'schedule' | 'notes-empty' | 'community';
+type Kind = 'wallpaper' | 'note' | 'notes-empty' | Exclude<ModuleId,'notes'>;
 interface Entry { key: string; kind: Kind; win: BrowserWindow; handle: string; attached: boolean; bounds: Rectangle; topmost: boolean; inputScale: number; displayId: number; layerVersion: number }
 interface Inspection { exists: boolean; window: { handle: string; parent: string; className: string; child: boolean; visible: boolean; minimized: boolean; topmost: boolean; dpi: number; bounds: Rectangle } | null }
 
@@ -35,18 +35,24 @@ export class DesktopController {
   }
 
   getStatus(): DesktopStatus { return { ...this.status }; }
+  onDrawerSurface?: (handle:string|null)=>void;
+  drawerHandle(): string|null {
+    const entry=this.entries.get('drawer');
+    return entry?.attached && !entry.win.isDestroyed() && !entry.win.webContents.isCrashed() && !this.stopped ? entry.handle : null;
+  }
   identify(contents: WebContents): Entry | undefined { return [...this.entries.values()].find(entry => entry.win.webContents === contents); }
   surfaceFor(contents: WebContents): DesktopSurface | null {
     const entry = this.identify(contents);
     return entry ? { bounds: entry.bounds, display: screen.getDisplayMatching(entry.bounds).bounds, topmost: entry.topmost } : null;
   }
   private publish(error: string | null = null) {
+    this.onDrawerSurface?.(this.drawerHandle());
     const entries = [...this.entries.values()].filter(e => e.attached && !e.win.isDestroyed());
     const next: DesktopStatus = { enabled: this.getState().settings.desktopEnabled !== false, active: entries.some(e => e.kind === 'wallpaper'), displays: entries.filter(e => e.kind === 'wallpaper').length, widgets: entries.filter(e => e.kind !== 'wallpaper').length, error };
     if (JSON.stringify(next) !== JSON.stringify(this.status)) { this.status = next; this.changed(next); }
   }
   async native<T>(...args: string[]): Promise<T> {
-    const { stdout } = await execute(this.executable, args, { windowsHide: true, timeout: 12000, encoding: 'utf8' });
+    const { stdout } = await execute(this.executable, args, { windowsHide: true, timeout: 12000, maxBuffer: args[0]==='drawer-files'?8_000_000:1_048_576, encoding: 'utf8' });
     return JSON.parse(stdout.replace(/^\uFEFF/, '').trim()) as T;
   }
   manipulate(contents: WebContents, mode: DragMode, anchor: {x:number;y:number}, bypass: boolean) {
@@ -201,7 +207,7 @@ export class DesktopController {
         const notes = !visible.includes('notes') || !activeNote ? [] : [activeNote];
         notes.forEach(n => wanted.add(`note:${n.id}`));
         if (!notes.length && visible.includes('notes')) wanted.add('notes-empty');
-        const ordinary = visible.filter((id): id is 'tasks' | 'calendar' | 'schedule' | 'community' => id !== 'notes' && id !== null);
+        const ordinary = visible.filter((id): id is Exclude<ModuleId,'notes'> => id !== 'notes');
         ordinary.forEach(id => wanted.add(id));
         let noteBounds: Rectangle | undefined;
         await Promise.all([...this.entries.values()].filter(entry => !wanted.has(entry.key)).map(async entry => {
@@ -275,6 +281,7 @@ export class DesktopController {
     const topmost = !wallpaper && !!this.getState().settings.topmostWidgets?.includes(kind === 'note' || kind === 'notes-empty' ? 'notes' : key);
     const entry: Entry = { key, kind, win, handle, attached: false, bounds, topmost, inputScale: screen.getDisplayMatching(bounds).scaleFactor, displayId: screen.getDisplayMatching(bounds).id, layerVersion: 0 };
     this.entries.set(key, entry);
+    if(kind==='drawer')win.webContents.on('render-process-gone',()=>this.onDrawerSurface?.(null));
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.setMenu(null);
     win.webContents.on('before-input-event', (event, input) => { if (input.control && ['+', '=', '-', '0'].includes(input.key)) event.preventDefault(); });
@@ -284,8 +291,7 @@ export class DesktopController {
     win.on('close', event => {
       if (this.stopped) return;
       event.preventDefault();
-      const flag = { tasks: 'showDesktopTasks', calendar: 'showDesktopCalendar', schedule: 'showDesktopSchedule', community: 'showDesktopCommunity', 'notes-empty': 'showDesktopNotes' }[kind as 'tasks' | 'calendar' | 'schedule' | 'community' | 'notes-empty'];
-      if (!wallpaper) void this.persist(kind === 'note' ? { type: 'note:update', id: key.slice(5), changes: { pinned: false } } : { type: 'settings:update', changes: { [flag]: false } });
+      if (kind !== 'wallpaper') void this.persist(kind === 'note' ? { type: 'note:update', id: key.slice(5), changes: { pinned: false } } : { type: 'settings:update', changes: { [modules[kind === 'notes-empty' ? 'notes' : kind].flag]: false } });
     });
     if (!await win.webContents.session.protocol.isProtocolHandled('wallnote')) win.webContents.session.protocol.handle('wallnote', request => session.defaultSession.fetch(request.url));
     await this.load(win, query);
@@ -347,6 +353,7 @@ export class DesktopController {
     if (entry.kind === 'schedule') return { type: 'settings:update', changes: { schedulePosition: position } };
     if (entry.kind === 'notes-empty') return { type: 'settings:update', changes: { notesPosition: position } };
     if (entry.kind === 'community') return { type: 'settings:update', changes: { communityPosition: position } };
+    if (entry.kind === 'drawer') return { type: 'settings:update', changes: { drawerPosition: position } };
     return null;
   }
 
@@ -361,6 +368,7 @@ export class DesktopController {
     return actions.filter((action): action is Action => action !== null);
   }
   private destroy(entry: Entry) {
+    if(entry.kind==='drawer')this.onDrawerSurface?.(null);
     entry.attached = false; entry.layerVersion++;
     this.interrupt(entry);
     const timer = this.timers.get(entry.key);

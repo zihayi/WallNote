@@ -10,8 +10,10 @@ function validReport(d: Digest): boolean {
   if (!d || !validDate(d.day) || !Number.isFinite(Date.parse(d.at)) || !Number.isFinite(Date.parse(d.since)) || !Array.isArray(d.sources) || !Array.isArray(d.items) || d.items.length > 72 || !Array.isArray(d.highlights) || d.highlights.length > 6 || !Array.isArray(d.notices) || d.notices.length > 20 || !d.notices.every(n => typeof n === 'string' && n.length <= 500) || (d.model !== null && typeof d.model !== 'string')) return false;
   normalizeSettings({ ...emptyCommunity().settings, sources: d.sources });
   const ids = new Set<string>();
+  if (d.overview !== undefined && (typeof d.overview !== 'string' || d.overview.length > 110)) return false;
   for (const i of d.items) {
     itemURL(i);
+    if (i.summary !== undefined && (typeof i.summary !== 'string' || i.summary.length > 160)) return false;
     if (!Number.isFinite(Date.parse(i.at)) || !i.title || typeof i.title !== 'string' || i.title.length > 240 || !Array.isArray(i.labels) || i.labels.length > 12 || !i.labels.every(l => typeof l === 'string' && l.length <= 60)) return false;
     ids.add(itemId(i));
   }
@@ -36,7 +38,7 @@ export class CommunityAssistant {
     try { await fs.mkdir(this.dir, { recursive: true }); }
     catch { this.view.error = '无法创建社区日报数据目录，请检查本机数据目录权限。'; return; }
     try {
-      if ((await fs.stat(this.stateFile)).size > 2_000_000) throw new Error();
+      if ((await fs.stat(this.stateFile)).size > 4_000_000) throw new Error();
       const obj = JSON.parse(await fs.readFile(this.stateFile, 'utf8'));
       const settings = normalizeSettings(obj.settings);
       if (obj.version !== 1 || !Array.isArray(obj.reports) || obj.reports.length > 7 || !obj.reports.every(validReport) || (obj.attempt !== '' && !validDate(obj.attempt))) throw new Error();
@@ -85,12 +87,13 @@ export class CommunityAssistant {
       this.until = +now + 60000; this.view.attempt = dateKey(now); this.view.error = null;
       try {
         await this.save();
-        const report = await collectFeed(settings, now, this.fetcher, signal);
+        const excerpts = new Map<string,string>();
+        const report = await collectFeed(settings, now, this.fetcher, signal, excerpts);
         if (settings.ai && report.items.length && !signal.aborted) {
           let secret: string | undefined;
           try { if (this.view.hasKey) secret = await this.vault.unseal(await fs.readFile(this.keyFile)); } catch { /* Never expose the decryption error. */ }
           if (!secret) report.notices.push('未配置可用的 DeepSeek 密钥，本期保留 GitHub 原始动态。');
-          else try { await summarize(report, settings, secret, this.fetcher, signal); }
+          else try { await summarize(report, settings, secret, this.fetcher, signal, excerpts); }
           catch (error) { report.notices.push((error as Error).message + ' 已保留原始动态。'); }
         }
         signal.throwIfAborted();

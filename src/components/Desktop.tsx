@@ -9,6 +9,7 @@ import { CalendarPanel, HourlySchedule } from './Planner';
 import { FloatingNote } from './Notes';
 import { visibleModule, type ModuleId } from '../../shared/modules';
 import { CommunityPanel } from './Community';
+import { FileDrawerPanel } from './FileDrawer';
 import { NativeGuides } from './LayoutGuides';
 import { SpatialPreview } from './LayoutStudio';
 import type { Rect } from '../../shared/snap-layout';
@@ -63,6 +64,7 @@ export function PlannerWorkspace({ state, standalone = false }: { state: AppStat
       case 'tasks': return <DesktopTasks state={state} />;
       case 'notes': return note ? <FloatingNote key={note.id} note={note} state={state} desktop={false} /> : <EmptyNotesPanel state={state} />;
       case 'community': return <CommunityPanel state={state} />;
+      case 'drawer': return <FileDrawerPanel state={state} />;
       default: return <div className="workspace-empty-slot" aria-label="空模块位置" />;
     }
   };

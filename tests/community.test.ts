@@ -35,10 +35,24 @@ describe('community assistant',()=>{
   });
   it('accepts only model references to collected sources and discards model-provided URLs',async()=>{
     const report=await collectFeed(base,now,publicData,new AbortController().signal);
-    const fake=vi.fn<FetchJSON>().mockResolvedValue(json({choices:[{message:{content:JSON.stringify({highlights:[{n:1,text:'新增验证。',url:'file:///bad'},{n:200,text:'不存在'},{n:1,text:'重复引用'}]})}}]}));
+    const fake=vi.fn<FetchJSON>().mockResolvedValue(json({choices:[{message:{content:JSON.stringify({overview:'本期关注验证器。',entries:[{n:1,text:'新增验证。',url:'file:///bad'},{n:200,text:'不存在'},{n:1,text:'重复引用'}],picks:[200,1,1]})}}]}));
     await summarize(report,base,'synthetic-test-key',fake,new AbortController().signal);
     expect(report.highlights).toEqual([{source:itemId(report.items[0]),text:'新增验证。'}]);expect(JSON.stringify(report)).not.toContain('file:');
+    expect(report.overview).toBe('本期关注验证器。');expect(report.items[0].summary).toBe('新增验证。');expect(report.items[1].summary).toBeUndefined();expect(report.notices.join('')).toContain('1/3');
     const [url,init]=fake.mock.calls[0];expect(url).toBe('https://api.deepseek.com/chat/completions');expect(JSON.parse(String(init.body)).tools).toBeUndefined();expect(init.redirect).toBe('error');
+  });
+  it('retains legacy daily caches and never forwards a public description without an explicit opt-in',async()=>{
+    const dir=await sandbox(), old=await collectFeed(base,now,publicData,new AbortController().signal);
+    old.highlights=[{source:itemId(old.items[0]),text:'旧导读'}];old.model=base.model;
+    await fs.writeFile(path.join(dir,'community.json'),JSON.stringify({version:1,settings:base,reports:[old],attempt:'',error:null}));
+    const s=create(dir,publicData,()=>now);await s.start();expect(s.status().reports[0].highlights).toEqual(old.highlights);
+    for(const opt of [false,true]) {
+      const settings={...base,ai:true,includeExcerpt:opt};const excerpts=new Map<string,string>();
+      const fresh=await collectFeed(settings,now,async()=>json({items:[{...row,body:'公开说明 <!--omit--> ```excluded```'}]}),new AbortController().signal,excerpts);
+      const fake=vi.fn<FetchJSON>().mockResolvedValue(json({choices:[{message:{content:JSON.stringify({overview:'测试',entries:[{n:1,text:'该条摘要'}],picks:[1]})}}]}));
+      await summarize(fresh,settings,'test-placeholder',fake,new AbortController().signal,excerpts);
+      expect(String(fake.mock.calls[0][1].body).includes('公开说明')).toBe(opt);expect(String(fake.mock.calls[0][1].body)).not.toContain('excluded');expect(JSON.stringify(fresh)).not.toContain('公开说明');
+    }
   });
   it('claims a local day across concurrent ticks and restarts, uses paid AI only when enabled, retains last good data offline',async()=>{
     const dir=await sandbox();let clock=new Date(2026,10,19,8,55),paid=0,offline=false;

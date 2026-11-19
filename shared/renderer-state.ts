@@ -1,7 +1,7 @@
 import type { AppState, ScheduleEvent } from './types';
 import { selectedDate } from './calendar';
 
-export type RendererView = 'main' | 'wallpaper' | 'calendar' | 'schedule' | 'tasks' | 'note' | 'notes-empty' | 'community';
+export type RendererView = 'main' | 'wallpaper' | 'calendar' | 'schedule' | 'tasks' | 'note' | 'notes-empty' | 'community' | 'drawer';
 
 // A wallpaper or task window must not retain every note body and phone calendar snapshot.
 // Calendar dots only need lightweight records outside the selected day.

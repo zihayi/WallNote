@@ -2,6 +2,7 @@ export type NoteColor = 'butter' | 'lavender' | 'mint' | 'rose' | 'sky';
 import type { CommunityView, CommunitySettings } from './community';
 import type { ModuleId, ModuleSlots } from './modules';
 import type { DockFrame, DockFrames, DragMode, Guides, LayoutDisplay } from './snap-layout';
+import type { DrawerView } from './drawer';
 export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings' | 'community';
 
 export interface Note {
@@ -87,6 +88,7 @@ export interface AppState {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
     showDesktopTasks?: boolean; showDesktopCalendar?: boolean; showDesktopSchedule?: boolean; showDesktopNotes?: boolean;
     showDesktopCommunity?: boolean; moduleSlots?: ModuleSlots; communityPosition?: Note['position'];
+    showDesktopDrawer?: boolean; drawerPosition?: Note['position']; hideIconsWithDrawer?: boolean;
     canvasModules?: ModuleId[]; dockFrames?: DockFrames; layoutSnap?: boolean;
     glassEnabled?: boolean;
     topmostWidgets?: string[];
@@ -141,6 +143,12 @@ export interface DesktopSurface {
 export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showPhoneSync' | 'showCommunity' | 'showDesktop' | 'resetLayout' | 'quit';
 
 export interface WallNoteAPI {
+  getDrawer(): Promise<DrawerView>;
+  refreshDrawer(): Promise<DrawerView>;
+  openDrawerItem(id: string, reveal?: boolean): Promise<void>;
+  drawerIcon(id: string): Promise<string>;
+  setDrawerIcons(hide: boolean): Promise<void>;
+  onDrawer(callback: (view: DrawerView) => void): () => void;
   getCommunity(): Promise<CommunityView>;
   configureCommunity(settings: CommunitySettings): Promise<CommunityView>;
   setCommunityKey(key: string | null): Promise<CommunityView>;

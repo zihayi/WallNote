@@ -6,7 +6,7 @@ using System.Text;
 using System.Web.Script.Serialization;
 using System.Threading;
 
-// A small out-of-process Win32 bridge. It never replaces Explorer or changes its icon view.
+// A small out-of-process Win32 bridge. Explicit file-drawer icon leases are reversible.
 internal static class DesktopHost
 {
     private delegate bool EnumProc(IntPtr window, IntPtr parameter);
@@ -141,6 +141,8 @@ internal static class DesktopHost
     private static object Run(string[] args)
     {
         SetThreadDpiAwarenessContext(new IntPtr(-4));
+        if (args.Length > 0 && args[0] == "drawer-files") return DesktopDrawer.Files(args);
+        if (args.Length > 0 && (args[0] == "drawer-lease" || args[0] == "drawer-recover")) return DesktopDrawer.Lease(args);
         if (args.Length == 0 || args[0] == "probe")
         {
             var windows = new List<object>();

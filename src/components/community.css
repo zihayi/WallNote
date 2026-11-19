@@ -29,5 +29,20 @@
 .brief-widget-list { min-height:0; flex:1; overflow:auto; }.brief-widget-list p { font-size:12px; line-height:1.7; color:#62796a; }
 .brief-widget-date { display:block; font-size:10px; letter-spacing:.5px; color:#62796a; padding:11px 0; }.brief-widget-footer { flex-shrink:0; padding-top:6px; }
 .workspace-empty-slot { min-width:0; min-height:0; border:1px dashed #ffffff80; border-radius:16px; }
+.brief-card-content { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; gap:5px; padding-top:6px; }
+.brief-card-lead { flex:none; padding:5px 8px; border-radius:8px; background:#eff7edbe; }
+.brief-card-lead>span,.brief-card-tooltip strong { display:flex; align-items:center; gap:5px; font-weight:600; color:#3c7153; font-size:10px; }
+.brief-card-lead p { font-size:12px; color:#344f40; line-height:1.45; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.brief-card-tags,.brief-card-kinds { display:flex; gap:4px; flex:none; overflow-x:auto; scrollbar-width:thin; }
+.brief-card-tags button,.brief-card-kinds button { flex:none; padding:3px 6px; font-size:10px; border-radius:6px; color:#526854; white-space:nowrap; }
+.brief-card-tags button { max-width:120px; overflow:hidden; text-overflow:ellipsis; background:#ffffff78; }
+.brief-card-tags [aria-pressed=true] { color:#fff; background:#477c66; }.brief-card-kinds [aria-pressed=true] { color:#315a43; background:#d9e8dbc9; font-weight:600; }
+.brief-card-kinds small { font:inherit; opacity:.75; }.brief-card-list { flex:1; min-height:0; overflow-y:auto; }
+.brief-card-list>button { display:block; width:100%; text-align:left; padding:5px 1px; border-bottom:1px solid #45664420; }
+.brief-card-list strong { font-size:12px; line-height:1.5; color:#344b3b; overflow-wrap:anywhere; }.brief-card-list small { display:block; font-size:10px; color:#536b59; overflow-wrap:anywhere; }
+.brief-card-list>button:is(:hover,:focus-visible) strong { color:#2d6348; text-decoration:underline; }.brief-card-list>p {color:#637868;font-size:12px;padding:7px 0}
+.brief-card-tooltip { position:absolute; z-index:3; inset-inline:0; pointer-events:none; padding:8px 10px; border:1px solid #cadbcf; border-radius:9px; background:#f8fcf7; box-shadow:0 3px 12px #203f2c23; overflow:hidden; }
+.brief-card-tooltip p { font-size:12px; line-height:1.5; margin-top:3px; overflow-wrap:anywhere; color:#304b3c; }
+@container widget (max-height:320px){.brief-card-lead p{-webkit-line-clamp:1}.brief-card-content{gap:2px}.brief-card-tags button,.brief-card-kinds button{padding-block:2px}.brief-card-tooltip{padding:4px 7px}}
 @media(max-width:1150px){.brief-grid {grid-template-columns:minmax(0,1fr) 230px;gap:13px}.brief-actions{flex-wrap:wrap}}
 @media(max-width:900px){.brief-grid{grid-template-columns:1fr}.brief-form{padding:0 17px 10px}.brief-page .page-heading{flex-wrap:wrap}}

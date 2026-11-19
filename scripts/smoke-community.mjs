@@ -20,12 +20,17 @@ try {
   await expect(page.getByRole('heading',{name:'你的第一份社区日报'})).toBeVisible();
   if (!live) {
     await app.evaluate(({session})=>{
+      globalThis.__communityCalls=0;
       session.defaultSession.protocol.handle('https',async req=>{
         const u=new URL(req.url);const send=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
-        if(u.host==='api.deepseek.com'&&u.pathname==='/chat/completions'&&req.method==='POST'&&req.headers.get('Authorization')?.startsWith('Bearer fixture-')) return send({choices:[{message:{content:JSON.stringify({highlights:[{n:1,text:'模拟日报导读'}]})}}]});
+        if(u.host==='api.deepseek.com'&&u.pathname==='/chat/completions'&&req.method==='POST'&&req.headers.get('Authorization')?.startsWith('Bearer fixture-')) {
+          globalThis.__communityCalls++;const body=await req.json();const sources=JSON.parse(body.messages[1].content).sources;
+          return send({choices:[{message:{content:JSON.stringify({overview:'模拟全期小结',entries:sources.map(s=>({n:s.n,text:`摘要：${s.title}`})),picks:[1]})}}]});
+        }
         if(u.host!=='api.github.com'||u.pathname!=='/search/issues'||req.headers.has('Authorization'))return new Response('',{status:403});
         const q=u.searchParams.get('q'), at=new Date().toISOString(), issue=q.includes('no:assignee'), merged=q.includes('is:merged');
-        return send({items:[{number:issue?33:merged?22:11,title:issue?'模拟贡献任务':merged?'模拟合并':'模拟新 PR',repository_url:'https://api.github.com/repos/llvm/llvm-project',state:merged?'closed':'open',assignees:[],labels:[{name:'mlir'},{name:'help wanted'}],...(!issue?{pull_request:{merged_at:merged?at:null}}:{}),created_at:at,updated_at:at}]});
+        const row={number:issue?33:merged?22:11,title:issue?'模拟贡献任务':merged?'模拟合并':'模拟新 PR',repository_url:'https://api.github.com/repos/llvm/llvm-project',state:merged?'closed':'open',assignees:[],labels:[{name:'mlir'},{name:'help wanted'}],...(!issue?{pull_request:{merged_at:merged?at:null}}:{}),created_at:at,updated_at:at};
+        return send({items:[row,...(!q.includes('label:"mlir"')&&!issue&&!merged?[{...row,number:44,title:'LLVM 独有 PR',labels:[]}]:[])]});
       });
     });
     const fake='fixture-'+randomBytes(15).toString('hex');
@@ -46,7 +51,7 @@ try {
     expect(status.hasKey).toBe(false);expect(report.model).toBeNull();
     console.log('Live public GitHub feed:',report.items.length,'unique items;',report.notices.length,'notices; no AI call.');
   } else {
-    expect(report.items).toHaveLength(3);await expect(page.getByText('模拟日报导读')).toBeVisible();
+    expect(report.items).toHaveLength(4);await expect(page.getByText('模拟全期小结')).toBeVisible();
     await page.getByRole('button',{name:'加入待办：模拟新 PR'}).click();await page.getByRole('button',{name:'加入待办：模拟新 PR'}).click();
     expect((await page.evaluate(()=>window.wallnote.getState())).tasks).toHaveLength(1);
     await page.getByRole('button',{name:'整理布局',exact:true}).click();
@@ -56,7 +61,17 @@ try {
     await page.evaluate(()=>window.wallnote.desktopControl('enable'));
     await expect.poll(()=>app.windows().some(w=>w.url().includes('widget=community')),{timeout:30000}).toBe(true);
     const widget=app.windows().find(w=>w.url().includes('widget=community'));
-    await expect(widget.locator('.community-panel')).toContainText('模拟日报导读');
+    await page.evaluate(async()=>{const settings=(await window.wallnote.getState()).settings;const d=(await window.wallnote.getLayoutDisplays()).find(d=>d.primary);await window.wallnote.dispatch({type:'layout:apply',ids:settings.canvasModules,frames:{...settings.dockFrames,community:{displayId:d.id,x:0.02,y:0.02,width:260/d.workArea.width,height:260/d.workArea.height}}});});
+    await expect(widget.locator('.brief-card-lead')).toContainText('模拟全期小结');
+    await expect(widget.locator('.brief-card-list > button')).toHaveCount(2);
+    await widget.getByRole('button',{name:'MLIR',exact:true}).click();await expect(widget.locator('.brief-card-list > button')).toHaveCount(1);
+    await widget.getByRole('button',{name:/待认领 Issue/}).click();const issue=widget.locator('.brief-card-list > button');await expect(issue).toContainText('模拟贡献任务');
+    await issue.hover();await expect(widget.getByRole('tooltip')).toContainText('摘要：模拟贡献任务');
+    const tip=await widget.getByRole('tooltip').boundingBox(),card=await widget.locator('.community-panel').boundingBox();expect(tip.y).toBeGreaterThanOrEqual(card.y);expect(tip.y+tip.height).toBeLessThanOrEqual(card.y+card.height+1);
+    await widget.getByRole('button',{name:/新 PR/}).first().focus();await expect(widget.getByRole('tooltip')).toHaveCount(0);
+    await widget.getByRole('button',{name:'LLVM',exact:true}).click();await widget.getByRole('group',{name:'动态分类'}).getByRole('button',{name:/新 PR/}).click();
+    const outside=widget.locator('.brief-card-list button').filter({hasText:'LLVM 独有 PR'});await outside.focus();await expect(widget.getByRole('tooltip')).toContainText('摘要：LLVM 独有 PR');
+    await widget.keyboard.press('Escape');await expect(widget.getByRole('tooltip')).toHaveCount(0);expect(await app.evaluate(()=>globalThis.__communityCalls)).toBe(1);
     await expect(widget.evaluate(async()=>{try{await window.wallnote.setCommunityKey(null);return false;}catch{return true;}})).resolves.toBe(true);
     const before=await widget.evaluate(()=>window.wallnote.getDesktopSurface());
     await page.getByRole('button',{name:'整理布局',exact:true}).click();

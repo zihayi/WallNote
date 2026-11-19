@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointer, type ReactNode } from 'react';
-import { CalendarDays, Check, Clock3, GitPullRequest, Grip, Layers, ListChecks, Magnet, RotateCcw, StickyNote } from 'lucide-react';
+import { Archive, CalendarDays, Check, Clock3, GitPullRequest, Grip, Layers, ListChecks, Magnet, RotateCcw, StickyNote } from 'lucide-react';
 import type { AppState } from '../../shared/types';
 import { modules, type ModuleId } from '../../shared/modules';
 import { displayedHome, moduleIds, moduleHome, shownModules, snapDrag, toFrame, type DockFrames, type DragMode, type Guides, type LayoutDisplay, type Rect } from '../../shared/snap-layout';
@@ -9,7 +9,7 @@ import { Modal } from './Modal';
 import { resizeHandles } from './resize-handles';
 import './layout-studio.css';
 
-const icons={schedule:Clock3,calendar:CalendarDays,tasks:ListChecks,notes:StickyNote,community:GitPullRequest};
+const icons={schedule:Clock3,calendar:CalendarDays,tasks:ListChecks,notes:StickyNote,community:GitPullRequest,drawer:Archive};
 function useDisplays() {
   const [displays,set]=useState<LayoutDisplay[]>([]),[error,fail]=useState('');
   useEffect(()=>{let live=true;const refresh=()=>void api.getLayoutDisplays().then(d=>{if(live){set(d);fail('');}}).catch(e=>{if(live)fail(errorMessage(e));});

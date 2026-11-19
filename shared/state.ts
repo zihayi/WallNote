@@ -68,7 +68,7 @@ export function reduceState(state: AppState, action: Action): AppState {
     case 'layout:apply': {
       if (!validModuleList(action.ids) || !validFrames(action.frames) || action.snap!==undefined && typeof action.snap!=='boolean') throw new Error('无效的桌面布局。');
       const flags=Object.fromEntries(action.ids.map(id=>[modules[id].flag,true]));
-      return {...state,settings:{...state.settings,...flags,layoutSnap:action.snap??state.settings.layoutSnap,canvasModules:[...action.ids],dockFrames:{...action.frames}}};
+      return {...state,settings:{...state.settings,...flags,...(!action.ids.includes('drawer')?{hideIconsWithDrawer:false}:{}),layoutSnap:action.snap??state.settings.layoutSnap,canvasModules:[...action.ids],dockFrames:{...action.frames}}};
     }
     case 'note:add':
       if (state.notes.some(n => n.id === action.note.id)) return state;
@@ -122,7 +122,7 @@ export function reduceState(state: AppState, action: Action): AppState {
       selectedWallpaperId: state.selectedWallpaperId === action.id ? 'mist' : state.selectedWallpaperId,
       appliedWallpaperId: state.appliedWallpaperId === action.id ? null : state.appliedWallpaperId,
     };
-    case 'settings:update': return { ...state, settings: { ...state.settings, ...action.changes } };
+    case 'settings:update': return { ...state, settings: { ...state.settings, ...action.changes, ...(action.changes.showDesktopDrawer === false ? {hideIconsWithDrawer:false} : {}) } };
     default: throw new Error('不支持的操作');
   }
 }
@@ -160,8 +160,8 @@ export function isValidState(value: unknown): value is AppState {
   if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean') || (value.settings.showDesktopTasks !== undefined && typeof value.settings.showDesktopTasks !== 'boolean') || !validPosition(value.settings.tasksPosition)) return false;
   if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
   if (value.settings.canvasModules !== undefined && !validModuleList(value.settings.canvasModules) || value.settings.dockFrames !== undefined && !validFrames(value.settings.dockFrames)) return false;
-  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'glassEnabled','layoutSnap'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
-  if (['calendarPosition', 'schedulePosition', 'notesPosition', 'communityPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
+  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'showDesktopDrawer', 'hideIconsWithDrawer', 'glassEnabled','layoutSnap'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
+  if (['calendarPosition', 'schedulePosition', 'notesPosition', 'communityPosition', 'drawerPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
   if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;
   if (value.settings.activeDesktopNote !== undefined && !isId(value.settings.activeDesktopNote)) return false;

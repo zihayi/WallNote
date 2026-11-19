@@ -14,6 +14,7 @@ import { PhoneSyncEntry, useManagerLink } from './components/PhoneSyncEntry';
 import { GitPullRequest } from 'lucide-react';
 import { CommunityPanel, CommunityPage, ModuleLayout } from './components/Community';
 import { LayoutButton } from './components/LayoutStudio';
+import { FileDrawerPanel } from './components/FileDrawer';
 
 const navigation: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
@@ -134,6 +135,7 @@ export default function App() {
   if (desktopView === 'calendar') return <CalendarPanel state={state} desktop />;
   if (desktopView === 'schedule') return <HourlySchedule state={state} desktop />;
   if (desktopView === 'community') return <CommunityPanel state={state} desktop />;
+  if (desktopView === 'drawer') return <FileDrawerPanel state={state} desktop />;
   if (desktopView === 'notes-empty') return <EmptyNotesPanel state={state} desktop />;
   if (floatingId) {
     const note = state.notes.find(n => n.id === floatingId);
@@ -199,7 +201,7 @@ export default function App() {
         </>}
 
         {page === 'settings' && <>
-          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.8.0'}</span></div>
+          <div className="page-heading"><div><h1>偏好设置</h1><p>手机同步、桌面组件与本地数据。</p></div><span className="version-tag">v{info?.version ?? '0.9.0'}</span></div>
           <div className="settings-layout"><div><PhoneSettings state={state} /><section className="settings-card"><div className="settings-section-title"><PanelTop size={19} /><h2>桌面组件</h2></div>
             <ModuleLayout state={state} />
             <div className="setting-row"><div><h3>桌面模式</h3><p>组件默认位于图标下方，直接拖动即可整理；点击图钉可置于其他窗口上方。</p></div><Switch label="桌面壁纸模式" checked={isDesktop && desktopStatus.enabled} onChange={() => void desktopCommand(desktopStatus.enabled ? 'disable' : 'enable')} /></div>

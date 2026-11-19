@@ -5,6 +5,12 @@ import type { WallNoteAPI } from '../shared/types';
 ipcRenderer.on('widget:reveal', () => { document.documentElement.dataset.widgetMotion = 'visible'; });
 
 const api: WallNoteAPI = {
+  getDrawer: () => ipcRenderer.invoke('drawer:get'),
+  refreshDrawer: () => ipcRenderer.invoke('drawer:refresh'),
+  openDrawerItem: (id,reveal=false) => ipcRenderer.invoke('drawer:open',id,reveal),
+  drawerIcon: id => ipcRenderer.invoke('drawer:icon',id),
+  setDrawerIcons: hide => ipcRenderer.invoke('drawer:icons',hide),
+  onDrawer: callback => { const listener = (_e:Electron.IpcRendererEvent,view:Parameters<typeof callback>[0])=>callback(view);ipcRenderer.on('drawer:changed',listener);return()=>ipcRenderer.removeListener('drawer:changed',listener); },
   getCommunity: () => ipcRenderer.invoke('community:get'),
   configureCommunity: settings => ipcRenderer.invoke('community:configure', settings),
   setCommunityKey: key => ipcRenderer.invoke('community:key', key),
