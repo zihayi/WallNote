@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowUpRight, BookOpen, Check, Clock3, GitMerge, GitPullRequest, Layers, Plus, RefreshCw, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import type { AppState } from '../../shared/types';
 import { emptyCommunity, feedNames, itemId, normalizeSettings, type CommunityView, type Digest, type FeedItem, type FeedKind } from '../../shared/community';
-import { assignSlot, defaultSlots, modules, slotNames, slots, visibleModule, type ModuleId, type Slot } from '../../shared/modules';
+import { LayoutButton } from './LayoutStudio';
 import { api, errorMessage, isDesktop } from '../api';
 import { FrostedPanel } from './FrostedPanel';
 import { Modal } from './Modal';
@@ -24,17 +24,7 @@ const timeOf = (date: string) => new Date(date).toLocaleString('zh-CN', { month:
 const sourceName = (repo: string, label: string) => repo.toLowerCase() === 'llvm/llvm-project' ? label.toLowerCase() === 'mlir' ? 'MLIR' : label || 'LLVM' : label ? `${repo} / ${label}` : repo;
 
 export function ModuleLayout({ state }: { state: AppState }) {
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const layout = state.settings.moduleSlots ?? defaultSlots;
-  const change = async (slot: Slot, id: ModuleId | null) => {
-    const next = assignSlot(layout, slot, id); if (!next) return;
-    setBusy(true);
-    try { await api.dispatch({ type: 'settings:update', changes: { moduleSlots: next, ...(id ? { [modules[id].flag]: true } : {}) } }); setError(''); }
-    catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
-  };
-  return <div className="module-layout"><h3><Layers size={16} />桌面模块布局</h3><p>选择卡片的停靠位置。已在桌面的模块会交换位置，置顶模块取消置顶后归位。</p>
-    <div className="module-slots">{slots.map(slot => <label key={slot} data-slot={slot}><span>{slotNames[slot]}</span><select aria-label={`${slotNames[slot]}模块`} disabled={busy} value={visibleModule(state.settings, slot) ?? ''} onChange={e => void change(slot, e.target.value as ModuleId || null)}><option value="">留空</option>{(Object.keys(modules) as ModuleId[]).map(id => <option key={id} value={id} disabled={!assignSlot(layout, slot, id)}>{modules[id].name}</option>)}</select></label>)}</div>
-    {error && <p className="form-error" role="alert">{error}</p>}</div>;
+  return <div className="module-layout"><h3><Layers size={16} />桌面模块布局</h3><p>在画布中添加模块、拖动对齐，或直接在桌面拖动卡片的标题和边角。</p><LayoutButton state={state} small/></div>;
 }
 
 function Preferences({ view, close }: { view: CommunityView; close: () => void }) {

@@ -1,6 +1,7 @@
 import type { Action, AppState, Note, Task, Wallpaper } from './types';
 import { eventError, validDate } from './calendar';
 import { validSlots, modules } from './modules';
+import { isModule, validFrame, validFrames, validModuleList } from './snap-layout';
 
 export const builtInWallpapers: Wallpaper[] = [
   { id: 'mist', name: '山野来信', description: '绿色山丘 · 1920 × 1080', category: 'nature', file: 'mist.jpg', colors: ['#59786d', '#a2b4a3', '#dbe1ce'] },
@@ -41,7 +42,7 @@ export function createInitialState(): AppState {
     appliedWallpaperId: null,
     settings: { alwaysOnTop: false, launchAtLogin: false, desktopEnabled: true, showDesktopTasks: true, showDesktopCalendar: true, showDesktopSchedule: true, showDesktopNotes: true, glassEnabled: true, topmostWidgets: [], layoutVersion: 4 },
     notes: [
-      { id: 'welcome', title: '使用说明', content: '点击显示按钮，将便签加入桌面。\n组件图钉用于置顶；置顶后可移动和缩放。\n\n内容会自动保存，多张便签可用箭头切换。', color: 'butter', pinned: false, updatedAt: now },
+      { id: 'welcome', title: '使用说明', content: '点击显示按钮，将便签加入桌面。\n拖标题移动卡片，拖边角缩放，图钉用于置顶。\n\n内容会自动保存，多张便签可用箭头切换。', color: 'butter', pinned: false, updatedAt: now },
       { id: 'inspiration', title: '项目记录', content: '项目：\n负责人：\n截止日期：\n\n备注：', color: 'lavender', pinned: false, updatedAt: now },
       { id: 'little-things', title: '备忘', content: '在这里记录需要保留的信息。', color: 'mint', pinned: false, updatedAt: now },
     ],
@@ -60,6 +61,15 @@ export function allWallpapers(state: AppState): Wallpaper[] {
 
 export function reduceState(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case 'layout:place': {
+      if (!isModule(action.id) || !validFrame(action.frame)) throw new Error('无效的模块位置。');
+      return {...state,settings:{...state.settings,dockFrames:{...state.settings.dockFrames,[action.id]:action.frame}}};
+    }
+    case 'layout:apply': {
+      if (!validModuleList(action.ids) || !validFrames(action.frames) || action.snap!==undefined && typeof action.snap!=='boolean') throw new Error('无效的桌面布局。');
+      const flags=Object.fromEntries(action.ids.map(id=>[modules[id].flag,true]));
+      return {...state,settings:{...state.settings,...flags,layoutSnap:action.snap??state.settings.layoutSnap,canvasModules:[...action.ids],dockFrames:{...action.frames}}};
+    }
     case 'note:add':
       if (state.notes.some(n => n.id === action.note.id)) return state;
       return { ...state, notes: [action.note, ...state.notes], settings: action.note.pinned ? { ...state.settings, activeDesktopNote: action.note.id } : state.settings };
@@ -149,7 +159,8 @@ export function isValidState(value: unknown): value is AppState {
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
   if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean') || (value.settings.showDesktopTasks !== undefined && typeof value.settings.showDesktopTasks !== 'boolean') || !validPosition(value.settings.tasksPosition)) return false;
   if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
-  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'glassEnabled'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
+  if (value.settings.canvasModules !== undefined && !validModuleList(value.settings.canvasModules) || value.settings.dockFrames !== undefined && !validFrames(value.settings.dockFrames)) return false;
+  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'glassEnabled','layoutSnap'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
   if (['calendarPosition', 'schedulePosition', 'notesPosition', 'communityPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
   if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;

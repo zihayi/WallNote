@@ -49,20 +49,28 @@ try {
     expect(report.items).toHaveLength(3);await expect(page.getByText('模拟日报导读')).toBeVisible();
     await page.getByRole('button',{name:'加入待办：模拟新 PR'}).click();await page.getByRole('button',{name:'加入待办：模拟新 PR'}).click();
     expect((await page.evaluate(()=>window.wallnote.getState())).tasks).toHaveLength(1);
-    await page.getByLabel('右上模块').selectOption('community');
+    await page.getByRole('button',{name:'整理布局',exact:true}).click();
+    let studio=page.getByRole('dialog',{name:'整理桌面布局'});
+    await studio.getByRole('checkbox',{name:'显示社区日报',exact:true}).check();
+    await studio.getByRole('button',{name:'应用布局',exact:true}).click();
     await page.evaluate(()=>window.wallnote.desktopControl('enable'));
     await expect.poll(()=>app.windows().some(w=>w.url().includes('widget=community')),{timeout:30000}).toBe(true);
     const widget=app.windows().find(w=>w.url().includes('widget=community'));
     await expect(widget.locator('.community-panel')).toContainText('模拟日报导读');
     await expect(widget.evaluate(async()=>{try{await window.wallnote.setCommunityKey(null);return false;}catch{return true;}})).resolves.toBe(true);
     const before=await widget.evaluate(()=>window.wallnote.getDesktopSurface());
-    await page.getByLabel('右下模块').selectOption('community');
+    await page.getByRole('button',{name:'整理布局',exact:true}).click();
+    studio=page.getByRole('dialog',{name:'整理桌面布局'});
+    const tile=studio.getByRole('button',{name:'移动社区日报',exact:true});
+    const box=await tile.boundingBox(); const x=box.x+box.width/2,y=box.y+box.height/2;
+    await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+30,y+60,{steps:8});await page.mouse.up();
+    await studio.getByRole('button',{name:'应用布局',exact:true}).click();
     await expect.poll(()=>widget.evaluate(()=>window.wallnote.getDesktopSurface().then(s=>s.bounds.y))).toBeGreaterThan(before.bounds.y);
     await page.reload();
-    await expect(page.locator('.workspace-right > .community-panel')).toBeVisible();
-    await page.locator('.workspace-right .community-panel').getByRole('button',{name:'查看日报'}).click();
+    await expect(page.locator('.spatial-frame > .community-panel')).toBeVisible();
+    await page.locator('.spatial-frame .community-panel').getByRole('button',{name:'查看日报'}).evaluate(b=>b.click());
     await expect(page.getByRole('heading',{name:'本期导读'})).toBeVisible();
-    expect(JSON.parse(await readFile(path.join(directory,'state.json'),'utf8')).settings.moduleSlots.lower).toBe('community');
-    console.log('Community integration passed: protected key storage, source-linked digest, task deduplication, native card swap and persisted layout.');
+    expect(JSON.parse(await readFile(path.join(directory,'state.json'),'utf8')).settings.dockFrames.community.y).toBeGreaterThan(0);
+    console.log('Community integration passed: protected key storage, source-linked digest, task deduplication, native card arrangement and persisted layout.');
   }
 } finally {await app?.close();}

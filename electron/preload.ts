@@ -39,8 +39,11 @@ const api: WallNoteAPI = {
     return () => ipcRenderer.removeListener('desktop:surface', listener);
   },
   focusDesktopWidget: () => ipcRenderer.send('desktop:focus'),
-  manipulateDesktopWidget: mode => ipcRenderer.send('desktop:manipulate', mode),
-  finishDesktopManipulation: () => ipcRenderer.send('desktop:manipulate-stop'),
+  getLayoutDisplays: () => ipcRenderer.invoke('layout:displays'),
+  onLayoutGuides: callback => { const listener = (_e: Electron.IpcRendererEvent, guides: Parameters<typeof callback>[0]) => callback(guides); ipcRenderer.on('layout:guides',listener); return () => ipcRenderer.removeListener('layout:guides', listener); },
+  onLayoutSaveError: callback => { const listener=()=>callback(); ipcRenderer.on('layout:save-error',listener); return () => ipcRenderer.removeListener('layout:save-error',listener); },
+  manipulateDesktopWidget: (mode,anchor,bypass) => ipcRenderer.send('desktop:manipulate', mode,anchor,bypass),
+  finishDesktopManipulation: cancel => ipcRenderer.send('desktop:manipulate-stop',cancel),
   desktopControl: command => ipcRenderer.invoke('desktop:control', command),
   onDesktopStatus: callback => {
     const listener = (_event: Electron.IpcRendererEvent, status: Parameters<typeof callback>[0]) => callback(status);

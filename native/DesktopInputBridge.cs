@@ -140,7 +140,7 @@ internal static class DesktopInputBridge
 
     private static void Emit(IntPtr target, string type, MouseData data, bool down, int delta) {
         Rect rect; if (!GetWindowRect(target, out rect)) return;
-        Output.Add(new { handle = target.ToInt64().ToString(), type = type, x = data.Point.X - rect.Left, y = data.Point.Y - rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top, leftDown = down, delta = delta, clickCount = ClickCount });
+        Output.Add(new { handle = target.ToInt64().ToString(), type = type, x = data.Point.X - rect.Left, y = data.Point.Y - rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top, leftDown = down, alt = (GetAsyncKeyState(0x12) & 0x8000) != 0, delta = delta, clickCount = ClickCount });
     }
 
     private static IntPtr HandleMouse(int code, IntPtr message, IntPtr address) {

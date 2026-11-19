@@ -68,8 +68,6 @@ try {
     expect(info).toMatchObject({ child: true, topmost: false });
     expect((await native('inspect', info.parent)).window.className).toBe('WorkerW');
   }
-  const originalCalendar = (await windowInfo(calendar)).bounds;
-  const originalNote = (await windowInfo(note)).bounds;
 
   await native('show-desktop'); shownDesktop = true;
   await new Promise(resolve => setTimeout(resolve, 700));
@@ -116,12 +114,13 @@ try {
   await expect(note.getByRole('textbox', { name: '便签内容', exact: true })).toHaveValue(/98765/);
   const beforeMove = (await windowInfo(note)).bounds;
   await mouse(note, note.locator('.frost-title'), 'drag', [50, 35]);
-  await expect.poll(async () => (await windowInfo(note)).bounds.x).toBe(beforeMove.x + 50);
+  await expect.poll(async () => Math.abs((await windowInfo(note)).bounds.x - beforeMove.x - 50)).toBeLessThanOrEqual(2);
   const beforeResize = (await windowInfo(note)).bounds;
   await mouse(note, note.getByRole('button', { name: '拖动调整便签大小', exact: true }), 'drag', [45, 35]);
-  await expect.poll(async () => (await windowInfo(note)).bounds.width).toBe(beforeResize.width + 45);
+  await expect.poll(async () => Math.abs((await windowInfo(note)).bounds.width - beforeResize.width - 45)).toBeLessThanOrEqual(2);
+  const resizedNote = (await windowInfo(note)).bounds;
   await mouse(note, note.getByRole('button', { name: '置顶便签', exact: true }));
-  await expect.poll(() => windowInfo(note)).toMatchObject({ child: true, topmost: false, bounds: originalNote });
+  await expect.poll(() => windowInfo(note)).toMatchObject({ child: true, topmost: false, bounds: resizedNote });
 
   await mouse(calendar, calendar.getByRole('button', { name: '置顶日历', exact: true }));
   await expect.poll(() => windowInfo(calendar)).toMatchObject({ child: false, topmost: true });
@@ -134,8 +133,9 @@ try {
   expect(Math.abs((await windowInfo(calendar)).bounds.height - 550 * scale)).toBeLessThanOrEqual(1);
   await assertOutline('floating');
   expect(await calendar.locator('.calendar-agenda').evaluate(el => el.clientHeight)).toBeGreaterThan(65);
+  const resizedCalendar = (await windowInfo(calendar)).bounds;
   await mouse(calendar, calendar.getByRole('button', { name: '置顶日历', exact: true }));
-  await expect.poll(() => windowInfo(calendar), { message: `Unpin after resize: ${JSON.stringify(await calendar.evaluate(() => window.__testHits))}` }).toMatchObject({ child: true, topmost: false, bounds: originalCalendar });
+  await expect.poll(() => windowInfo(calendar)).toMatchObject({ child: true, topmost: false, bounds: resizedCalendar });
   await assertOutline('embedded');
 
   await native('restore-desktop'); shownDesktop = false;

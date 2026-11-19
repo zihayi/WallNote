@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface MousePacket {
   handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave';
-  x: number; y: number; width: number; height: number; delta: number; clickCount: number; leftDown: boolean;
+  x: number; y: number; width: number; height: number; delta: number; clickCount: number; leftDown: boolean; alt?: boolean;
 }
 export interface InputTarget { handle: string; pinned: boolean; scale: number; minWidth: number; minHeight: number }
 

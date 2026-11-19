@@ -49,7 +49,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.7.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.8.0', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -77,6 +77,9 @@ const previewAPI: WallNoteAPI = {
   onDesktopSurface: () => () => undefined,
   focusDesktopWidget: () => undefined,
   manipulateDesktopWidget: () => undefined,
+  getLayoutDisplays: async () => [{ id: 0, primary: true, workArea: { x:0,y:0,width:window.screen.availWidth||1440,height:window.screen.availHeight||900 } }],
+  onLayoutGuides: () => () => undefined,
+  onLayoutSaveError: () => () => undefined,
   finishDesktopManipulation: () => undefined,
   windowAction: () => undefined,
 };

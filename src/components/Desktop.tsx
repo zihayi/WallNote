@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCheck, Leaf, Plus, StickyNote } from 'lucide-react';
 import { activeDesktopNote, allWallpapers, createNote } from '../../shared/state';
 import type { Action, AppState } from '../../shared/types';
@@ -7,13 +7,18 @@ import { TaskInput, TaskRow } from './Tasks';
 import { FrostedPanel } from './FrostedPanel';
 import { CalendarPanel, HourlySchedule } from './Planner';
 import { FloatingNote } from './Notes';
-import { visibleModule, type Slot } from '../../shared/modules';
+import { visibleModule, type ModuleId } from '../../shared/modules';
 import { CommunityPanel } from './Community';
+import { NativeGuides } from './LayoutGuides';
+import { SpatialPreview } from './LayoutStudio';
+import type { Rect } from '../../shared/snap-layout';
 
 export function DesktopWallpaper({ state }: { state: AppState }) {
+  const [bounds,setBounds]=useState<Rect>();
+  useEffect(()=>{ let live=true; const off=api.onDesktopSurface(s=>{if(live)setBounds(s.bounds);}); void api.getDesktopSurface().then(s=>{if(live&&s)setBounds(s.bounds);}).catch(()=>undefined);return()=>{live=false;off();}; },[]);
   const wallpapers = allWallpapers(state);
   const current = wallpapers.find(w => w.id === state.appliedWallpaperId) ?? wallpapers.find(w => w.id === state.selectedWallpaperId) ?? wallpapers[0];
-  return <main className="desktop-wallpaper" aria-label="Windows 桌面壁纸"><img src={wallpaperURL(current)} alt={current.name} draggable={false} /><div className="wallpaper-signature"><Leaf size={14} /><span>WallNote</span><i />{current.name}</div></main>;
+  return <main className="desktop-wallpaper" aria-label="Windows 桌面壁纸"><img src={wallpaperURL(current)} alt={current.name} draggable={false} /><div className="wallpaper-signature"><Leaf size={14} /><span>WallNote</span><i />{current.name}</div><NativeGuides bounds={bounds} displayId={Number(new URLSearchParams(location.search).get('display'))}/></main>;
 }
 
 export function DesktopTasks({ state, desktop = false }: { state: AppState; desktop?: boolean }) {
@@ -51,8 +56,8 @@ export function PlannerWorkspace({ state, standalone = false }: { state: AppStat
   const wallpapers = allWallpapers(state);
   const wallpaper = wallpapers.find(w => w.id === (standalone ? state.appliedWallpaperId ?? state.selectedWallpaperId : state.selectedWallpaperId)) ?? wallpapers[0];
   const note = activeDesktopNote(state);
-  const panel = (slot: Slot) => {
-    switch (visibleModule(state.settings, slot)) {
+  const panel = (id: ModuleId|null) => {
+    switch (id) {
       case 'schedule': return <HourlySchedule state={state} />;
       case 'calendar': return <CalendarPanel state={state} showPhoneLink={!standalone} />;
       case 'tasks': return <DesktopTasks state={state} />;
@@ -61,8 +66,9 @@ export function PlannerWorkspace({ state, standalone = false }: { state: AppStat
       default: return <div className="workspace-empty-slot" aria-label="空模块位置" />;
     }
   };
-  return <div className={`planner-workspace ${standalone ? 'standalone-workspace' : ''}`} style={{ backgroundImage: `url("${wallpaperURL(wallpaper)}")` }}>
-    <div className="planner-workspace-grid">{panel('left')}{panel('center')}<div className="workspace-right">{panel('upper')}{panel('lower')}</div></div>
+  const custom=!!(state.settings.canvasModules||state.settings.dockFrames);
+  return <div className={`planner-workspace ${standalone ? 'standalone-workspace' : ''} ${custom?'spatial-workspace':''}`} style={{ backgroundImage: `url("${wallpaperURL(wallpaper)}")` }}>
+    {custom ? <SpatialPreview state={state} panel={panel} standalone={standalone}/> : <div className="planner-workspace-grid">{panel(visibleModule(state.settings,'left'))}{panel(visibleModule(state.settings,'center'))}<div className="workspace-right">{panel(visibleModule(state.settings,'upper'))}{panel(visibleModule(state.settings,'lower'))}</div></div>}
     {standalone && <div className="workspace-watermark">WallNote</div>}
   </div>;
 }

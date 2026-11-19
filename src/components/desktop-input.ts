@@ -1,20 +1,27 @@
 import type { PointerEvent } from 'react';
 import { api } from '../api';
+import type { DragMode } from '../../shared/snap-layout';
 
-export function beginDesktopManipulation(event: PointerEvent<HTMLElement>, mode: 'move' | 'resize') {
-  if (event.button !== 0 || (mode === 'move' && (event.target as HTMLElement).closest('button'))) return;
+export function beginDesktopManipulation(event: PointerEvent<HTMLElement>, mode: DragMode) {
+  if (!event.isPrimary || event.button !== 0 || (mode === 'move' && (event.target as Element).closest('button,input,select,textarea,a,[contenteditable=true]'))) return;
   event.preventDefault();
   const element = event.currentTarget;
-  element.setPointerCapture(event.pointerId);
-  const finish = () => {
-    element.removeEventListener('pointerup', finish);
-    element.removeEventListener('pointercancel', finish);
-    element.removeEventListener('lostpointercapture', finish);
-    api.finishDesktopManipulation();
-    if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+  const id=event.pointerId;
+  element.setPointerCapture(id);
+  const finish = (cancel: boolean) => {
+    element.removeEventListener('pointerup', up);
+    element.removeEventListener('pointercancel', lost);
+    element.removeEventListener('lostpointercapture', lost);
+    window.removeEventListener('keydown', key);
+    api.finishDesktopManipulation(cancel);
+    if (element.hasPointerCapture(id)) element.releasePointerCapture(id);
   };
-  element.addEventListener('pointerup', finish);
-  element.addEventListener('pointercancel', finish);
-  element.addEventListener('lostpointercapture', finish);
-  api.manipulateDesktopWidget(mode);
+  const up=(e:globalThis.PointerEvent)=>{if(e.pointerId===id)finish(false);};
+  const lost=(e:globalThis.PointerEvent)=>{if(e.pointerId===id)finish(true);};
+  const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();finish(true);}};
+  element.addEventListener('pointerup', up);
+  element.addEventListener('pointercancel', lost);
+  element.addEventListener('lostpointercapture', lost);
+  window.addEventListener('keydown', key);
+  api.manipulateDesktopWidget(mode, {x:event.clientX,y:event.clientY}, event.altKey);
 }

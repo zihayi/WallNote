@@ -256,33 +256,33 @@ internal static class DesktopHost
             if (desktopThread != 0) AttachThreadInput(widgetThread, desktopThread, false);
             return new { released = true };
         }
-        if (args[0] == "move" || args[0] == "resize")
+        if (args[0] == "arrange")
         {
             var window = OwnedWindow(args[1], args[2]);
+            SetThreadDpiAwarenessContext(new IntPtr(-4)); // Pipe coordinates are physical screen pixels.
             var parent = GetParent(window);
-            Point start; GetCursorPos(out start);
-            Rect initial; GetWindowRect(window, out initial);
-            double scale = Scale(window, args, 5);
-            int minWidth = args.Length > 3 ? int.Parse(args[3]) : 260;
-            int minHeight = args.Length > 4 ? int.Parse(args[4]) : 260;
-            int lastWidth = initial.Right - initial.Left, lastHeight = initial.Bottom - initial.Top;
-            DateTime deadline = DateTime.UtcNow.AddSeconds(10);
-            while (IsWindow(window) && (GetAsyncKeyState(1) & 0x8000) != 0 && DateTime.UtcNow < deadline)
-            {
-                Point cursor; GetCursorPos(out cursor);
-                int dx = cursor.X - start.X, dy = cursor.Y - start.Y;
-                var point = new Point { X = initial.Left, Y = initial.Top };
-                int width = initial.Right - initial.Left, height = initial.Bottom - initial.Top;
-                if (args[0] == "move") { point.X += dx; point.Y += dy; }
-                else { width = Math.Max((int)(minWidth * scale), Math.Min((int)(1600 * scale), width + dx)); height = Math.Max((int)(minHeight * scale), Math.Min((int)(1600 * scale), height + dy)); }
-                if (parent == IntPtr.Zero && (width != lastWidth || height != lastHeight)) {
-                    ClipFloatingWidget(window, width, height, scale); lastWidth = width; lastHeight = height;
+            int lastWidth = 0, lastHeight = 0; double lastScale = 0; bool released = false;
+            string line;
+            while ((line = Console.ReadLine()) != null && IsWindow(window) && GetParent(window) == parent) {
+                if (line != ".") {
+                    var fields = line.Split(' '); if (fields.Length != 5) throw new ArgumentException("Invalid placement.");
+                    var point = new Point { X = int.Parse(fields[0]), Y = int.Parse(fields[1]) };
+                    int w = int.Parse(fields[2]), h = int.Parse(fields[3]);
+                    double scale = double.Parse(fields[4], System.Globalization.CultureInfo.InvariantCulture);
+                    if (w < 1 || h < 1 || w > 32000 || h > 32000 || !(scale > 0 && scale <= 12)) throw new ArgumentException("Invalid size.");
+                    if (parent == IntPtr.Zero && (w != lastWidth || h != lastHeight || scale != lastScale)) ClipFloatingWidget(window, w, h, scale);
+                    if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
+                    if (!SetWindowPos(window, IntPtr.Zero, point.X, point.Y, w, h, 0x0010 | 0x0004)) throw new Win32Exception();
+                    lastWidth = w; lastHeight = h; lastScale = scale;
                 }
-                if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
-                SetWindowPos(window, IntPtr.Zero, point.X, point.Y, width, height, 0x0010 | 0x0004 | (args[0] == "move" ? 0x0001U : 0U));
-                Thread.Sleep(16);
+                bool cancel = (GetAsyncKeyState(27) & 0x8000) != 0;
+                // Embedded clicks are consumed and routed by DesktopInputBridge. Their
+                // mouse-up packet, not the foreground application's button state, ends a drag.
+                if (!released && (cancel || (parent == IntPtr.Zero && (GetAsyncKeyState(1) & 0x8000) == 0))) {
+                    released = true; Console.WriteLine(cancel ? "cancel" : "release"); Console.Out.Flush();
+                }
             }
-            return new { moved = true };
+            return new { arranged = true };
         }
         if (args[0] == "refresh")
         {

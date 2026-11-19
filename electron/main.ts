@@ -18,7 +18,9 @@ import { ManagerMotion } from './window-motion';
 import { EventEditorWindow } from './event-editor';
 import { CommunityAssistant } from './community';
 import { itemId, itemURL } from '../shared/community';
-import { defaultSlots, modules, validSlots, type ModuleId } from '../shared/modules';
+import { modules, validSlots } from '../shared/modules';
+import { assignedModules, dragModes, validFrames, validModuleList } from '../shared/snap-layout';
+import { layoutDisplays } from './snap-gesture';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -52,9 +54,9 @@ let flushed = false;
 let queue: Promise<unknown> = Promise.resolve();
 const wallpaperCache = new WallpaperCache(path.join(store.directory, 'render-cache'), wallpaperPath);
 const desktop = new DesktopController(() => store.state, loadWindow, action => serial(async () => {
-  if (quitting) return;
+  if (quitting && action.type !== 'layout:place') return;
   await store.save(reduceState(store.state, action));
-  await desktop.sync(); broadcast();
+  if (!quitting) { await desktop.sync(); broadcast(); }
 }), status => {
   for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.send('desktop:changed', status);
   updateTray();
@@ -155,7 +157,7 @@ function updateTray() {
       await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true, showDesktopNotes: true } }, { type: 'note:add', note }));
       await desktop.sync(); broadcast();
     }).catch(reportBackgroundError); } },
-    ...Object.values(store.state.settings.moduleSlots ?? defaultSlots).filter((id): id is ModuleId => id !== null).map(id => {
+    ...assignedModules(store.state.settings).map(id => {
       const { flag, name } = modules[id];
       return { label: `显示${name}`, type: 'checkbox' as const, checked: store.state.settings[flag] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [flag]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } };
     }),
@@ -179,7 +181,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -211,10 +213,12 @@ function validateAction(value: unknown): asserts value is Action {
     'task:add': ['type', 'task'], 'task:toggle': ['type', 'id'], 'task:priority': ['type', 'id'], 'task:update': ['type', 'id', 'text'], 'task:delete': ['type', 'id'], 'task:clearCompleted': ['type'],
     'event:add': ['type', 'event'], 'event:update': ['type', 'id', 'changes'], 'event:delete': ['type', 'id'], 'calendar:select': ['type', 'date'],
     'widget:topmost': ['type', 'key', 'enabled'],
+    'layout:apply': ['type', 'ids', 'frames'],
     'wallpaper:favorite': ['type', 'id'], 'wallpaper:select': ['type', 'id'], 'wallpaper:delete': ['type', 'id'], 'settings:update': ['type', 'changes'],
   };
   const keys = allowed[value.type];
-  const optional = value.type === 'event:update' ? ['expectedRevision'] : [];
+  if (value.type === 'layout:apply' && (!validModuleList(action.ids) || !validFrames(action.frames))) throw new Error('无效的模块布局。');
+  const optional = value.type === 'event:update' ? ['expectedRevision'] : value.type==='layout:apply'?['snap']:[];
   if (!keys || Object.keys(action).some(k => !keys.includes(k) && !optional.includes(k)) || keys.some(k => !(k in action))) throw new Error('无效的操作参数');
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
@@ -263,6 +267,7 @@ function installIPC(): void {
     if (editor && !plannerEditor.allows(input)) throw new Error('编辑窗口只能操作当前日程。');
     if (quitting) throw new Error('正在退出，请稍后重新打开。');
     const widget = desktop.identify(event.sender);
+    if (input.type === 'layout:apply') trusted(event, true);
     if (widget?.kind === 'wallpaper') throw new Error('壁纸层为只读显示。');
     if (input.type === 'widget:topmost') {
       if (widget && input.key !== (widget.kind === 'note' || widget.kind === 'notes-empty' ? 'notes' : widget.key)) throw new Error('只能切换当前组件的层级。');
@@ -286,8 +291,9 @@ function installIPC(): void {
         if (!supportsLaunchAtLogin) throw new Error('请在 Windows 安装版中设置登录时启动。');
         app.setLoginItemSettings({ openAtLogin: input.changes.launchAtLogin, name: 'WallNote', path: process.execPath });
       }
-      const rearrange = input.type === 'settings:update' && input.changes.moduleSlots !== undefined;
-      if (rearrange && !validSlots(next.settings.moduleSlots)) throw new Error('模块布局无效。');
+      const slotsChanged = input.type === 'settings:update' && input.changes.moduleSlots !== undefined;
+      const rearrange = slotsChanged || input.type === 'layout:apply';
+      if (slotsChanged && !validSlots(next.settings.moduleSlots)) throw new Error('模块布局无效。');
       await store.save(next);
       if (input.type === 'wallpaper:delete') {
         // Imported files are app-owned copies; the original image is never removed.
@@ -374,16 +380,17 @@ function installIPC(): void {
   });
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
+  ipcMain.handle('layout:displays', event => { trusted(event,true); return layoutDisplays(); });
   ipcMain.on('desktop:focus', event => {
     const entry = desktop.identify(event.sender);
     if (entry && entry.kind !== 'wallpaper' && event.senderFrame === event.sender.mainFrame) void desktop.focusWidget(event.sender).catch(() => undefined);
   });
-  ipcMain.on('desktop:manipulate', (event, mode: string) => {
+  ipcMain.on('desktop:manipulate', (event, mode, anchor, bypass) => {
     const entry = desktop.identify(event.sender);
-    if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || (mode !== 'move' && mode !== 'resize')) return;
-    desktop.manipulate(event.sender, mode);
+    if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || !dragModes.includes(mode) || !Number.isFinite(anchor?.x) || !Number.isFinite(anchor?.y) || typeof bypass!=='boolean' || quitting) return;
+    desktop.manipulate(event.sender, mode, anchor, bypass);
   });
-  ipcMain.on('desktop:manipulate-stop', event => { if (event.senderFrame === event.sender.mainFrame) desktop.finishManipulation(event.sender); });
+  ipcMain.on('desktop:manipulate-stop', (event,cancel) => { if (event.senderFrame === event.sender.mainFrame) desktop.finishManipulation(event.sender,cancel===true); });
   ipcMain.handle('desktop:control', (event, command: DesktopCommand) => {
     trusted(event);
     if (!['enable', 'disable', 'showManager', 'showPhoneSync', 'showCommunity', 'showDesktop', 'resetLayout', 'quit'].includes(command)) throw new Error('未知桌面操作');

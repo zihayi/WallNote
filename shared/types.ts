@@ -1,6 +1,7 @@
 export type NoteColor = 'butter' | 'lavender' | 'mint' | 'rose' | 'sky';
 import type { CommunityView, CommunitySettings } from './community';
-import type { ModuleSlots } from './modules';
+import type { ModuleId, ModuleSlots } from './modules';
+import type { DockFrame, DockFrames, DragMode, Guides, LayoutDisplay } from './snap-layout';
 export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings' | 'community';
 
 export interface Note {
@@ -86,6 +87,7 @@ export interface AppState {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
     showDesktopTasks?: boolean; showDesktopCalendar?: boolean; showDesktopSchedule?: boolean; showDesktopNotes?: boolean;
     showDesktopCommunity?: boolean; moduleSlots?: ModuleSlots; communityPosition?: Note['position'];
+    canvasModules?: ModuleId[]; dockFrames?: DockFrames; layoutSnap?: boolean;
     glassEnabled?: boolean;
     topmostWidgets?: string[];
     layoutVersion?: number;
@@ -110,6 +112,8 @@ export type Action =
   | { type: 'event:delete'; id: string }
   | { type: 'calendar:select'; date: string }
   | { type: 'widget:topmost'; key: string; enabled: boolean }
+  | { type: 'layout:place'; id: ModuleId; frame: DockFrame }
+  | { type: 'layout:apply'; ids: ModuleId[]; frames: DockFrames; snap?: boolean }
   | { type: 'wallpaper:favorite'; id: string }
   | { type: 'wallpaper:select'; id: string }
   | { type: 'wallpaper:delete'; id: string }
@@ -165,7 +169,10 @@ export interface WallNoteAPI {
   getDesktopSurface(): Promise<DesktopSurface | null>;
   onDesktopSurface(callback: (surface: DesktopSurface) => void): () => void;
   focusDesktopWidget(): void;
-  manipulateDesktopWidget(mode: 'move' | 'resize'): void;
-  finishDesktopManipulation(): void;
+  getLayoutDisplays(): Promise<LayoutDisplay[]>;
+  onLayoutGuides(callback: (guides: Guides) => void): () => void;
+  onLayoutSaveError(callback: () => void): () => void;
+  manipulateDesktopWidget(mode: DragMode, anchor: {x:number;y:number}, bypass: boolean): void;
+  finishDesktopManipulation(cancel?: boolean): void;
   windowAction(action: 'minimize' | 'maximize' | 'close'): void;
 }

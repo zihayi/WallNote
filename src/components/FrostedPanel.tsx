@@ -4,6 +4,8 @@ import { allWallpapers } from '../../shared/state';
 import type { AppState, DesktopSurface } from '../../shared/types';
 import { api, blurredWallpaperURL, errorMessage, isDesktop, wallpaperURL } from '../api';
 import { beginDesktopManipulation } from './desktop-input';
+import { NativeGuides } from './LayoutGuides';
+import { resizeHandles } from './resize-handles';
 
 export function FrostedPanel({ state, title, widgetKey, icon, children, desktop = false, className = '', onClose, actions }: {
   state: AppState; title: string; widgetKey: string; icon?: ReactNode; children: ReactNode; desktop?: boolean; className?: string; onClose?: () => void; actions?: ReactNode;
@@ -25,8 +27,9 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
     let alive = true;
     let revision = 0;
     const stop = api.onDesktopSurface(next => { revision += 1; if (alive) setSurface(next); });
+    const offError=api.onLayoutSaveError(()=>setPinError('布局未能保存，请检查数据目录后重试。'));
     void api.getDesktopSurface().then(next => { if (alive && !revision) setSurface(next); }).catch(() => undefined);
-    return () => { alive = false; stop(); };
+    return () => { alive = false; stop(); offError(); };
   }, [desktop]);
   const wallpapers = allWallpapers(state);
   const current = wallpapers.find(w => w.id === state.appliedWallpaperId) ?? wallpapers.find(w => w.id === state.selectedWallpaperId) ?? wallpapers[0];
@@ -34,13 +37,14 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
   const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onPointerDownCapture={() => { if (desktop) api.focusDesktopWidget(); }}>
     {surface && state.settings.glassEnabled !== false && <div className="frost-scene" aria-hidden="true" style={{ ...sceneStyle, backgroundImage: `url("${blurredWallpaperURL(current)}")` }} />}
     <div className="frost-tint" aria-hidden="true" />
-    <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? topmost ? '拖动以移动组件' : '点击图钉置顶后可移动和调整大小' : undefined} onPointerDown={event => { if (desktop && topmost) beginDesktopManipulation(event, 'move'); }}>
+    <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? '拖动标题栏移动并吸附；按住 Alt 开始拖动可自由摆放' : undefined} onPointerDown={event => { if (desktop) beginDesktopManipulation(event, 'move'); }}>
       <div className="frost-title">{desktop && topmost ? <Grip size={15} /> : icon}<h2>{title}</h2></div>
       <div className="frost-header-actions">{actions}<button className={`icon-button widget-pin ${(pinIntent ?? topmost) ? 'active' : ''}`} aria-label={`置顶${title}`} aria-pressed={topmost} aria-busy={pinIntent !== null} aria-disabled={pinIntent !== null} title={pinIntent !== null ? pinIntent ? '正在置顶…' : '正在返回桌面…' : topmost ? '取消置顶，返回图标下方' : '置于所有窗口上方'} onClick={() => void togglePin()}><Pin size={14} /></button>{desktop && <button className="icon-button" aria-label="打开管理面板" title="管理面板" onClick={() => void api.desktopControl('showManager')}><Settings size={15} /></button>}{onClose && <button className="icon-button" aria-label={`收起${title}`} onClick={onClose}><X size={16} /></button>}</div>
     </header>
     {children}
     {pinError && <p className="widget-error" role="alert">{pinError}</p>}
-    {desktop && topmost && <button className="desktop-resize-handle" aria-label={`拖动调整${title}大小`} onPointerDown={event => beginDesktopManipulation(event, 'resize')} />}
+    {desktop && resizeHandles.map(({mode,label})=><button key={mode} tabIndex={-1} className={`module-grip grip-${mode}${mode==='resize'?' desktop-resize-handle':''}`} title={label} aria-label={mode==='resize'?`拖动调整${title}大小`:`${label}：${title}`} onPointerDown={event => beginDesktopManipulation(event, mode)} />)}
+    {desktop && <NativeGuides bounds={surface?.bounds}/>}
   </section>;
   if (!desktop) return panel;
   // WorkerW child windows can flatten per-pixel alpha into a rectangular surface. In that
