@@ -4,15 +4,13 @@ import path from 'node:path';
 import { category, FileDrawer, type DrawerRoot } from '../electron/file-drawer';
 import { createInitialState, reduceState } from '../shared/state';
 import { shownModules } from '../shared/snap-layout';
-import { isDrawerPoint, validDrawerAreas } from '../shared/drawer';
+import { isDrawerPoint } from '../shared/drawer';
 
 const dirs:string[]=[];const drawers:FileDrawer[]=[];
 afterEach(async()=>{for(const d of drawers.splice(0))d.surface(null,false);for(const d of dirs.splice(0))await fs.rm(d,{recursive:true,force:true});});
 describe('desktop file drawer',()=>{
-  it('accepts only bounded viewport-relative drawer menu and right-click hit positions',()=>{
+  it('accepts only bounded viewport-relative Windows menu anchors',()=>{
     expect(isDrawerPoint({x:0,y:1})).toBe(true);expect(isDrawerPoint({x:-1,y:.5})).toBe(false);expect(isDrawerPoint({x:NaN,y:0})).toBe(false);
-    expect(validDrawerAreas([])).toBe(true);expect(validDrawerAreas([{x:.5,y:0,width:.5,height:.25}])).toBe(true);
-    for(const value of [null,[null],[{x:0,y:0,width:0,height:1}],[{x:.9,y:0,width:.5,height:1}],Array(1025).fill({x:0,y:0,width:.1,height:.1})])expect(validDrawerAreas(value)).toBe(false);
   });
   it('classifies documents, applications, shortcuts and folders independently of case or dotted folder names',()=>{
     expect(category('a.PDF',false)).toBe('document');expect(category('bundle.pdf',true)).toBe('folder');

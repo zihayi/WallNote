@@ -1,8 +1,8 @@
 export type NoteColor = 'butter' | 'lavender' | 'mint' | 'rose' | 'sky';
 import type { CommunityView, CommunitySettings } from './community';
-import type { ModuleId, ModuleSlots } from './modules';
+import type { ModuleFlag, ModuleId, ModuleSlots } from './modules';
 import type { DockFrame, DockFrames, DragMode, Guides, LayoutDisplay } from './snap-layout';
-import type { DrawerView, DrawerPoint, DrawerHitArea } from './drawer';
+import type { DrawerView, DrawerPoint } from './drawer';
 export type Page = 'dashboard' | 'wallpapers' | 'notes' | 'tasks' | 'calendar' | 'settings' | 'community';
 
 export interface Note {
@@ -86,16 +86,13 @@ export interface AppState {
   appliedWallpaperId: string | null;
   settings: {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
-    showDesktopTasks?: boolean; showDesktopCalendar?: boolean; showDesktopSchedule?: boolean; showDesktopNotes?: boolean;
-    showDesktopCommunity?: boolean; moduleSlots?: ModuleSlots; communityPosition?: Note['position'];
-    showDesktopDrawer?: boolean; drawerPosition?: Note['position']; hideIconsWithDrawer?: boolean;
+    moduleSlots?: ModuleSlots; hideIconsWithDrawer?: boolean;
     canvasModules?: ModuleId[]; dockFrames?: DockFrames; layoutSnap?: boolean;
     glassEnabled?: boolean;
     topmostWidgets?: string[];
     layoutVersion?: number;
     activeDesktopNote?: string;
-    tasksPosition?: Note['position']; calendarPosition?: Note['position']; schedulePosition?: Note['position']; notesPosition?: Note['position'];
-  };
+  } & Partial<Record<ModuleFlag,boolean> & Record<`${ModuleId}Position`,Note['position']>>;
 }
 
 export type Action =
@@ -146,8 +143,9 @@ export interface WallNoteAPI {
   getDrawer(): Promise<DrawerView>;
   refreshDrawer(): Promise<DrawerView>;
   openDrawerItem(id: string, reveal?: boolean): Promise<void>;
-  showDrawerMenu(id: string, anchor: DrawerPoint, extended: boolean): Promise<void>;
-  drawerHitAreas(areas: DrawerHitArea[]): void;
+  showDrawerMenu(id: string, anchor: DrawerPoint, extended: boolean,ticket?:string): Promise<void>;
+  prepareDrawerMenu(id:string,ticket:string): Promise<void>;
+  discardDrawerMenu(ticket:string): Promise<void>;
   drawerIcon(id: string): Promise<string>;
   setDrawerIcons(hide: boolean): Promise<void>;
   onDrawer(callback: (view: DrawerView) => void): () => void;
@@ -178,7 +176,6 @@ export interface WallNoteAPI {
   onDesktopStatus(callback: (status: DesktopStatus) => void): () => void;
   getDesktopSurface(): Promise<DesktopSurface | null>;
   onDesktopSurface(callback: (surface: DesktopSurface) => void): () => void;
-  focusDesktopWidget(): void;
   getLayoutDisplays(): Promise<LayoutDisplay[]>;
   onLayoutGuides(callback: (guides: Guides) => void): () => void;
   onLayoutSaveError(callback: () => void): () => void;

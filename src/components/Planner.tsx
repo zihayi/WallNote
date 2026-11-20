@@ -10,6 +10,17 @@ import { FrostedPanel } from './FrostedPanel';
 import { PhoneSyncEntry } from './PhoneSyncEntry';
 
 type RunAction = (action: Action) => Promise<boolean>;
+function useClock(unit:'minute'|'hour') {
+  const [now,set]=useState(()=>new Date());
+  useEffect(()=>{
+    let timer:ReturnType<typeof setTimeout>;
+    const tick=()=>{clearTimeout(timer);const d=new Date(),next=new Date(d);set(d);
+      if(unit==='hour')next.setMinutes(60,0,0);else next.setSeconds(60,0);
+      timer=setTimeout(tick,Math.max(1,+next-+d));
+    };
+    tick();window.addEventListener('focus',tick);return()=>{clearTimeout(timer);window.removeEventListener('focus',tick);};
+  },[unit]);return now;
+}
 function useActions() {
   const [error, setError] = useState('');
   const run: RunAction = async action => {
@@ -107,13 +118,12 @@ function EventButton({ event, onClick, sync }: { event: ScheduleEvent; onClick: 
 export function CalendarPanel({ state, desktop = false, showPhoneLink = true }: { state: AppState; desktop?: boolean; showPhoneLink?: boolean }) {
   const date = selectedDate(state);
   const [month, setMonth] = useState(date.slice(0, 7));
-  const [now, setNow] = useState(new Date());
+  const now=useClock('minute');
   const { error, run, setError } = useActions();
   const { editor, setEditor } = useEventDialog(desktop, setError);
   useEffect(() => setMonth(date.slice(0, 7)), [date]);
-  useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
   const days = useMemo(() => monthDays(month), [month]);
-  const events = eventsOnDate(state, date);
+  const events=useMemo(()=>eventsOnDate(state,date),[state.events,state.phoneEvents,date]);
   const counts = useMemo(() => {
     const result = new Map<string, number>();
     for (const event of calendarEvents(state)) result.set(event.date, (result.get(event.date) ?? 0) + 1);
@@ -137,7 +147,9 @@ export function CalendarPanel({ state, desktop = false, showPhoneLink = true }: 
 
 export function HourlySchedule({ state, desktop = false }: { state: AppState; desktop?: boolean }) {
   const date = selectedDate(state);
-  const events = eventsOnDate(state, date);
+  const events=useMemo(()=>eventsOnDate(state,date),[state.events,state.phoneEvents,date]);
+  const hours=useMemo(()=>{const buckets=Array.from({length:24},()=>[] as ScheduleEvent[]);for(const event of events)buckets[Number(event.start.slice(0,2))].push(event);return buckets;},[events]);
+  const now=useClock('hour'),currentHour=date===dateKey(now)?now.getHours():-1;
   const { error, run, setError } = useActions();
   const { editor, setEditor } = useEventDialog(desktop, setError);
   const scroll = useRef<HTMLDivElement>(null);
@@ -150,10 +162,9 @@ export function HourlySchedule({ state, desktop = false }: { state: AppState; de
   const moveDate = (delta: number) => { const next = shiftDate(date, delta); if (validDate(next)) void run({ type: 'calendar:select', date: next }); };
   return <FrostedPanel state={state} title="时间安排" widgetKey="schedule" icon={<Clock3 size={18} />} desktop={desktop} className="hourly-panel" onClose={desktop ? () => void run({ type: 'settings:update', changes: { showDesktopSchedule: false } }) : undefined}>
     <div className="schedule-day"><div><h3>{parseDate(date).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</h3><span>{parseDate(date).toLocaleDateString('zh-CN', { weekday: 'long' })} · {events.length} 项安排</span></div><div><button className="icon-button" aria-label="前一天" disabled={date === '1900-01-01'} onClick={() => moveDate(-1)}><ChevronLeft size={17} /></button><button className="icon-button" aria-label="后一天" disabled={date === '2100-12-31'} onClick={() => moveDate(1)}><ChevronRight size={17} /></button></div></div>
-    <div className="hourly-list" ref={scroll} aria-label={`${date} 按小时日程`}>{Array.from({ length: 24 }, (_, hour) => {
-      const rows = events.filter(event => Number(event.start.slice(0, 2)) === hour);
+    <div className="hourly-list" ref={scroll} aria-label={`${date} 按小时日程`}>{hours.map((rows,hour) => {
       const hourText = `${String(hour).padStart(2, '0')}:00`;
-      return <div key={hour} data-hour={hour} className={`hour-row ${date === dateKey() && new Date().getHours() === hour ? 'current-hour' : ''}`}><button className="hour-label" aria-label={`在 ${hourText} 添加日程`} onClick={() => setEditor({ event: createEvent(date, hour), existing: false })}>{hourText}</button><div className="hour-events">{rows.map(event => <EventButton key={event.id} event={event} sync={state.phoneSync?.items[event.id]} onClick={() => setEditor({ event, existing: true })} />)}<button className={`hour-add ${rows.length ? 'has-events' : ''}`} aria-label={`添加 ${hourText} 的安排`} onClick={() => setEditor({ event: createEvent(date, hour), existing: false })}><Plus size={13} /><span>添加安排</span></button></div></div>;
+      return <div key={hour} data-hour={hour} className={`hour-row ${currentHour===hour ? 'current-hour' : ''}`}><button className="hour-label" aria-label={`在 ${hourText} 添加日程`} onClick={() => setEditor({ event: createEvent(date, hour), existing: false })}>{hourText}</button><div className="hour-events">{rows.map(event => <EventButton key={event.id} event={event} sync={state.phoneSync?.items[event.id]} onClick={() => setEditor({ event, existing: true })} />)}<button className={`hour-add ${rows.length ? 'has-events' : ''}`} aria-label={`添加 ${hourText} 的安排`} onClick={() => setEditor({ event: createEvent(date, hour), existing: false })}><Plus size={13} /><span>添加安排</span></button></div></div>;
     })}</div>
     <button className="schedule-add button" onClick={() => setEditor({ event: createEvent(date), existing: false })}><Plus size={15} />添加日程</button>
     {error && <p className="widget-error" role="alert">{error}</p>}

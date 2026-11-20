@@ -1,16 +1,31 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { DrawerHitArea } from '../shared/drawer';
 
 export interface MousePacket {
-  handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave';
-  x: number; y: number; width: number; height: number; delta: number; clickCount: number; leftDown: boolean; rightDown?: boolean; button?: 'left'|'right'; alt?: boolean; shift?: boolean;
+  handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave' | 'outside';
+  x: number; y: number; delta: number; clickCount: number; leftDown: boolean; rightDown?: boolean; button?: 'left'|'right'; alt?: boolean; shift?: boolean;
 }
-export interface InputTarget { handle: string; pinned: boolean; scale: number; minWidth: number; minHeight: number; rightAreas?: DrawerHitArea[] }
+interface InputTarget { handle: string; scale: number }
 
 export class DesktopInputBridge {
   private child: ChildProcessWithoutNullStreams | null = null;
   private starting: Promise<void> | null = null;
   private signature = '';
+  private serial = 0;
+  private replies = new Map<number,(ok:boolean)=>void>();
+  private cancelRequests() { for (const finish of this.replies.values()) finish(false); }
+  private request(command: {op:'focus';handle:string} | {op:'check';windows:{handle:string;pinned:boolean}[]}) {
+    const child=this.child;
+    if(!child?.stdin.writable)return Promise.resolve(false);
+    const id=++this.serial;
+    return new Promise<boolean>(resolve=>{
+      const finish=(ok:boolean)=>{this.replies.delete(id); clearTimeout(timer); resolve(ok);};
+      const timer=setTimeout(()=>finish(false),1500);
+      this.replies.set(id,finish);
+      child.stdin.write(JSON.stringify({...command,id})+'\n',err=>{if(err)finish(false);});
+    });
+  }
+  focus(handle:string) { return this.request({op:'focus',handle}); }
+  check(windows:{handle:string;pinned:boolean}[]) { return this.request({op:'check',windows}); }
   constructor(private executable: string, private onMouse: (packet: MousePacket) => void, private onError: (error: Error) => void) {}
 
   async start() {
@@ -31,8 +46,10 @@ export class DesktopInputBridge {
         for (const line of lines) {
           try {
             const packet = JSON.parse(line.trim().replace(/^\uFEFF/, ''));
+            if (this.child!==child) continue;
             if (packet.ready) { ready = true; clearTimeout(timeout); resolve(); }
-            else if (typeof packet.handle === 'string' && ['move', 'down', 'up', 'wheel', 'leave'].includes(packet.type)) this.onMouse(packet as MousePacket);
+            else if (typeof packet.reply==='number') this.replies.get(packet.reply)?.(packet.ok===true);
+            else if (typeof packet.handle === 'string' && ['move', 'down', 'up', 'wheel', 'leave','outside'].includes(packet.type)) this.onMouse(packet as MousePacket);
           } catch { /* Ignore non-protocol lines from the bridge. */ }
         }
       });
@@ -40,7 +57,7 @@ export class DesktopInputBridge {
       child.on('exit', () => {
         clearTimeout(timeout);
         const unexpected = this.child === child;
-        if (unexpected) { this.child = null; this.signature = ''; }
+        if (unexpected) { this.child = null; this.signature = ''; this.cancelRequests(); }
         const error = new Error(stderr.trim() || '桌面交互服务已停止。');
         if (!ready) reject(error); else if (unexpected) this.onError(error);
       });
@@ -51,10 +68,10 @@ export class DesktopInputBridge {
     const text = JSON.stringify({ op: 'targets', windows });
     if (this.child && text !== this.signature) { this.signature = text; this.child.stdin.write(`${text}\n`); }
   }
-  manipulate(handle: string, mode: 'move' | 'resize') { this.child?.stdin.write(`${JSON.stringify({ op: mode, handle })}\n`); }
-  finish(handle: string) { this.child?.stdin.write(`${JSON.stringify({ op: 'stop', handle })}\n`); }
+  setMenuProcess(pid:number) { if(this.child?.stdin.writable)this.child.stdin.write(JSON.stringify({op:'menu',pid})+'\n'); }
   async stop() {
     const child = this.child; this.child = null; this.signature = '';
+    this.cancelRequests();
     if (!child) return;
     await new Promise<void>(resolve => {
       const timeout = setTimeout(() => { child.kill(); resolve(); }, 1000);

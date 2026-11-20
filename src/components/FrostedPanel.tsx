@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Grip, Pin, Settings, X } from 'lucide-react';
-import { allWallpapers } from '../../shared/state';
+import { currentWallpaper } from '../../shared/wallpapers';
 import type { AppState, DesktopSurface } from '../../shared/types';
 import { api, blurredWallpaperURL, errorMessage, isDesktop, wallpaperURL } from '../api';
 import { beginDesktopManipulation } from './desktop-input';
@@ -31,10 +31,9 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
     void api.getDesktopSurface().then(next => { if (alive && !revision) setSurface(next); }).catch(() => undefined);
     return () => { alive = false; stop(); offError(); };
   }, [desktop]);
-  const wallpapers = allWallpapers(state);
-  const current = wallpapers.find(w => w.id === state.appliedWallpaperId) ?? wallpapers.find(w => w.id === state.selectedWallpaperId) ?? wallpapers[0];
+  const current = currentWallpaper(state);
   const sceneStyle = surface ? { left: surface.display.x - surface.bounds.x, top: surface.display.y - surface.bounds.y, width: surface.display.width, height: surface.display.height, backgroundImage: `url("${wallpaperURL(current)}")` } : undefined;
-  const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onPointerDownCapture={() => { if (desktop) api.focusDesktopWidget(); }}>
+  const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onContextMenu={event => event.preventDefault()}>
     {surface && state.settings.glassEnabled !== false && <div className="frost-scene" aria-hidden="true" style={{ ...sceneStyle, backgroundImage: `url("${blurredWallpaperURL(current)}")` }} />}
     <div className="frost-tint" aria-hidden="true" />
     <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? '拖动标题栏移动并吸附；按住 Alt 开始拖动可自由摆放' : undefined} onPointerDown={event => { if (desktop) beginDesktopManipulation(event, 'move'); }}>

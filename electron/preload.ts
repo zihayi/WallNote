@@ -3,13 +3,15 @@ import type { WallNoteAPI } from '../shared/types';
 
 // The native host has positioned the real HWND, including its DPI correction.
 ipcRenderer.on('widget:reveal', () => { document.documentElement.dataset.widgetMotion = 'visible'; });
+ipcRenderer.on('desktop:outside-press', () => { window.dispatchEvent(new Event('wallnote:outside-press')); });
 
 const api: WallNoteAPI = {
   getDrawer: () => ipcRenderer.invoke('drawer:get'),
   refreshDrawer: () => ipcRenderer.invoke('drawer:refresh'),
   openDrawerItem: (id,reveal=false) => ipcRenderer.invoke('drawer:open',id,reveal),
-  showDrawerMenu: (id,anchor,extended) => ipcRenderer.invoke('drawer:menu',id,anchor,extended),
-  drawerHitAreas: areas => ipcRenderer.send('drawer:hit-areas',areas),
+  showDrawerMenu: (id,anchor,extended,ticket) => ipcRenderer.invoke('drawer:menu',id,anchor,extended,ticket),
+  prepareDrawerMenu: (id,ticket) => ipcRenderer.invoke('drawer:menu-prepare',id,ticket),
+  discardDrawerMenu: ticket => ipcRenderer.invoke('drawer:menu-discard',ticket),
   drawerIcon: id => ipcRenderer.invoke('drawer:icon',id),
   setDrawerIcons: hide => ipcRenderer.invoke('drawer:icons',hide),
   onDrawer: callback => { const listener = (_e:Electron.IpcRendererEvent,view:Parameters<typeof callback>[0])=>callback(view);ipcRenderer.on('drawer:changed',listener);return()=>ipcRenderer.removeListener('drawer:changed',listener); },
@@ -46,7 +48,6 @@ const api: WallNoteAPI = {
     ipcRenderer.on('desktop:surface', listener);
     return () => ipcRenderer.removeListener('desktop:surface', listener);
   },
-  focusDesktopWidget: () => ipcRenderer.send('desktop:focus'),
   getLayoutDisplays: () => ipcRenderer.invoke('layout:displays'),
   onLayoutGuides: callback => { const listener = (_e: Electron.IpcRendererEvent, guides: Parameters<typeof callback>[0]) => callback(guides); ipcRenderer.on('layout:guides',listener); return () => ipcRenderer.removeListener('layout:guides', listener); },
   onLayoutSaveError: callback => { const listener=()=>callback(); ipcRenderer.on('layout:save-error',listener); return () => ipcRenderer.removeListener('layout:save-error',listener); },

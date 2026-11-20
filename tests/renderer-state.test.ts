@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { createEvent } from '../shared/calendar';
 import { createInitialState, isValidState } from '../shared/state';
-import { stateForView } from '../shared/renderer-state';
+import { stateForView, viewInputs } from '../shared/renderer-state';
+import { widgetAllows } from '../electron/widget-actions';
 
 describe('renderer memory payloads', () => {
+  it('does not wake unrelated windows on a task edit but does wake glass panels on a wallpaper change',()=>{
+    const s=createInitialState(),next={...s,tasks:[...s.tasks].reverse()};
+    expect(viewInputs(s,'tasks')).not.toEqual(viewInputs(next,'tasks'));
+    for(const kind of ['calendar','note','wallpaper','drawer'] as const){
+      expect(viewInputs(next,kind)).toEqual(viewInputs(s,kind));
+      expect(viewInputs({...s,appliedWallpaperId:'coast'},kind)).not.toEqual(viewInputs(s,kind));
+    }
+  });
+  it('limits desktop actions to the owning module, including legacy note windows',()=>{
+    expect(widgetAllows('wallpaper','wallpaper:42',{type:'widget:topmost',key:'calendar',enabled:true})).toBe(false);
+    expect(widgetAllows('drawer','drawer',{type:'task:clearCompleted'})).toBe(false);
+    expect(widgetAllows('drawer','drawer',{type:'settings:update',changes:{showDesktopDrawer:false}})).toBe(true);
+    expect(widgetAllows('drawer','drawer',{type:'settings:update',changes:{showDesktopDrawer:false,launchAtLogin:true}})).toBe(false);
+    expect(widgetAllows('note','note:a',{type:'note:update',id:'b',changes:{content:''}})).toBe(false);
+    expect(widgetAllows('note','note:a',{type:'widget:topmost',key:'notes',enabled:true})).toBe(true);
+  });
   it('omits unrelated content from wallpaper and task windows', () => {
     const state = createInitialState();
     state.notes[0].content = 'x'.repeat(40000);

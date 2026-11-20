@@ -1,16 +1,10 @@
-import type { Action, AppState, Note, Task, Wallpaper } from './types';
+import type { Action, AppState, Note, Task } from './types';
 import { eventError, validDate } from './calendar';
-import { validSlots, modules } from './modules';
+import { validSlots, modules, moduleFlags, modulePositions } from './modules';
 import { isModule, validFrame, validFrames, validModuleList } from './snap-layout';
 
-export const builtInWallpapers: Wallpaper[] = [
-  { id: 'mist', name: '山野来信', description: '绿色山丘 · 1920 × 1080', category: 'nature', file: 'mist.jpg', colors: ['#59786d', '#a2b4a3', '#dbe1ce'] },
-  { id: 'coast', name: '海边散步', description: '海岸风景 · 1920 × 1080', category: 'nature', file: 'coast.jpg', colors: ['#80b7c3', '#d5e6df', '#e9d6b5'] },
-  { id: 'dusk', name: '日落之前', description: '日落山景 · 1920 × 1080', category: 'nature', file: 'dusk.jpg', colors: ['#b88b99', '#e9bbad', '#685d84'] },
-  { id: 'dunes', name: '风的形状', description: '沙丘风景 · 1920 × 1080', category: 'nature', file: 'dunes.jpg', colors: ['#cb9975', '#e7c8a7', '#9d6d57'] },
-  { id: 'bloom', name: '柔光之间', description: '渐变色彩 · 1920 × 1080', category: 'abstract', file: 'bloom.jpg', colors: ['#c0b6db', '#efcfc5', '#a1b7d1'] },
-  { id: 'sage', name: '一叶清晨', description: '绿色植物 · 1920 × 1080', category: 'abstract', file: 'sage.jpg', colors: ['#97aa8d', '#dfe3c9', '#617d6c'] },
-];
+import { allWallpapers, builtInWallpapers } from './wallpapers';
+export { allWallpapers, builtInWallpapers };
 
 export const noteColors = ['butter', 'lavender', 'mint', 'rose', 'sky'] as const;
 
@@ -53,10 +47,6 @@ export function createInitialState(): AppState {
       { id: 'welcome-task', text: '安装 WallNote', completed: true, priority: false, createdAt: now },
     ],
   };
-}
-
-export function allWallpapers(state: AppState): Wallpaper[] {
-  return [...builtInWallpapers, ...state.wallpapers];
 }
 
 export function reduceState(state: AppState, action: Action): AppState {
@@ -157,11 +147,11 @@ function validPhoneSync(value: unknown): boolean {
 export function isValidState(value: unknown): value is AppState {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !Array.isArray(value.wallpapers) || !Array.isArray(value.favorites)) return false;
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
-  if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean') || (value.settings.showDesktopTasks !== undefined && typeof value.settings.showDesktopTasks !== 'boolean') || !validPosition(value.settings.tasksPosition)) return false;
+  if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean')) return false;
   if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
   if (value.settings.canvasModules !== undefined && !validModuleList(value.settings.canvasModules) || value.settings.dockFrames !== undefined && !validFrames(value.settings.dockFrames)) return false;
-  if (['showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'showDesktopDrawer', 'hideIconsWithDrawer', 'glassEnabled','layoutSnap'].some(key => value.settings && isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
-  if (['calendarPosition', 'schedulePosition', 'notesPosition', 'communityPosition', 'drawerPosition'].some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
+  if ([...moduleFlags, 'hideIconsWithDrawer', 'glassEnabled','layoutSnap'].some(key => isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
+  if (modulePositions.some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
   if (value.settings.layoutVersion !== undefined && (!Number.isInteger(value.settings.layoutVersion) || Number(value.settings.layoutVersion) < 1)) return false;
   if (value.settings.activeDesktopNote !== undefined && !isId(value.settings.activeDesktopNote)) return false;

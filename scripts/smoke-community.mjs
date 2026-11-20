@@ -17,7 +17,7 @@ try {
   app=await electron.launch({...(process.argv.includes('--packaged')?{executablePath:path.resolve('release/win-unpacked/WallNote.exe'),args:[]}:{args:['.']}),env,timeout:45000});
   const page=await app.firstWindow();
   await page.getByRole('navigation').getByRole('button',{name:'社区日报',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'你的第一份社区日报'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'暂无日报'})).toBeVisible();
   if (!live) {
     await app.evaluate(({session})=>{
       globalThis.__communityCalls=0;
@@ -36,8 +36,8 @@ try {
     const fake='fixture-'+randomBytes(15).toString('hex');
     await page.getByRole('button',{name:'订阅设置',exact:true}).click();
     const modal=page.getByRole('dialog',{name:'社区日报设置'});
-    await modal.locator('input[type=password]').fill(fake);
     await modal.getByLabel('用 DeepSeek 生成中文导读').check();
+    await modal.locator('input[type=password]').fill(fake);
     await modal.getByRole('button',{name:'保存设置'}).click();
     await expect(modal).toHaveCount(0);
     expect((await readFile(path.join(directory,'community','deepseek-key.bin'))).includes(Buffer.from(fake))).toBe(false);

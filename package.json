@@ -1,6 +1,6 @@
 {
   "name": "wallnote",
-  "version": "0.9.2",
+  "version": "0.10.1",
   "private": true,
   "description": "Windows 桌面壁纸、日历、时间安排、便签与待办清单。",
   "author": "WallNote",
@@ -13,6 +13,9 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite --host 127.0.0.1",
     "assets": "node scripts/generate-assets.mjs",
+    "predev": "npm run assets",
+    "predev:web": "npm run assets",
+    "prebuild": "npm run assets",
     "postinstall": "npm run assets",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build && node scripts/build-electron.mjs",

@@ -1,0 +1,6 @@
+.desktop-wallpaper {position:fixed;inset:0;overflow:hidden;user-select:none;background:#365d50;}
+.desktop-wallpaper img {display:block;width:100%;height:100%;object-fit:cover;}
+.desktop-wallpaper .snap-guides {position:absolute;inset:0;pointer-events:none;}
+.desktop-wallpaper .snap-guides i {position:absolute;background:#68dca3;box-shadow:0 0 0 1px #19583b60;}
+.desktop-wallpaper .snap-line-x {top:0;bottom:0;width:1px;}
+.desktop-wallpaper .snap-line-y {left:0;right:0;height:1px;}

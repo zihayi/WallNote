@@ -107,14 +107,14 @@ export class FileDrawer {
     if(!this.handle || !file)throw new Error('项目已移除或抽屉未开启，请刷新。');
     return file.source.file;
   }
-  async currentFile(id:string){
+  async menuItem(id:string){
     const file=this.file(id);
-    try{await fs.lstat(file);}catch{this.schedule();throw new Error('项目已移动或删除，请刷新抽屉。');}
+    const s=await fs.lstat(file,{bigint:true}).catch(()=>{this.schedule();throw new Error('项目已移动或删除，请刷新抽屉。');});
     if(this.file(id)!==file)throw new Error('项目已变化。');
-    return file;
+    return {file,stamp:`${s.dev}:${s.ino}:${s.ctimeNs}:${s.mtimeNs}:${s.size}`};
   }
   async open(id:string,reveal:boolean){
-    const file=await this.currentFile(id);
+    const {file}=await this.menuItem(id);
     if(reveal){this.deps.reveal(file);return;}
     if(await this.deps.launch(file))throw new Error('Windows 未能打开此项目。可在文件资源管理器中查看。');
   }

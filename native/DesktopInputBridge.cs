@@ -1,285 +1,208 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
-using System.Windows.Forms;
 
-// Routes mouse input only through blank desktop areas to this process's wallpaper widgets.
-// Desktop icons and other applications retain their normal mouse handling. No keyboard hook.
-internal static class DesktopInputBridge
-{
+// Embedded windows sit below the Explorer icon layer. A press belongs to the
+// visible rounded card under it, including its blank space, or entirely to Windows.
+internal static class DesktopInputBridge {
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct MouseData { public Point Point; public uint Data, Flags, Time; public UIntPtr Extra; }
+    [StructLayout(LayoutKind.Sequential)] private struct Message { public IntPtr Window; public uint Id; public UIntPtr W; public IntPtr L; public uint Time; public Point Pt; public uint Private; }
+    [StructLayout(LayoutKind.Sequential)] private struct GuiInfo { public int Size; public uint Flags; public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret; public Rect CaretRect; }
     private delegate IntPtr HookProc(int code, IntPtr message, IntPtr data);
-    private delegate bool EnumProc(IntPtr window, IntPtr data);
     [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int type, HookProc callback, IntPtr module, uint thread);
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr message, IntPtr data);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string module);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string module);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint thread, uint id, UIntPtr w, IntPtr l);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr w,IntPtr l);
+    [DllImport("user32.dll")] private static extern int GetMessage(out Message msg, IntPtr window, uint first, uint last);
+    [DllImport("user32.dll")] private static extern bool PeekMessage(out Message msg, IntPtr window, uint first, uint last, uint remove);
+    [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref Message msg);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr window);
-    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint cmd);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent,IntPtr window);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
-    [DllImport("user32.dll")] private static extern bool ScreenToClient(IntPtr window, ref Point point);
-    [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr window, ref Point point);
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern uint GetDoubleClickTime();
-    [DllImport("user32.dll")] private static extern int GetSystemMetricsForDpi(int index,uint dpi);
-    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr data);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int size);
+    [DllImport("user32.dll")] private static extern int GetSystemMetricsForDpi(int index, uint dpi);
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int size);
     [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
-    [DllImport("user32.dll")] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr first, IntPtr second, uint flags, uint timeout, out IntPtr result);
-    [DllImport("kernel32.dll")] private static extern IntPtr OpenProcess(uint access, bool inherit, uint process);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
-    [DllImport("kernel32.dll")] private static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address, UIntPtr size, uint allocation, uint protection);
-    [DllImport("kernel32.dll")] private static extern bool VirtualFreeEx(IntPtr process, IntPtr address, UIntPtr size, uint type);
-    [DllImport("kernel32.dll")] private static extern bool WriteProcessMemory(IntPtr process, IntPtr address, byte[] data, UIntPtr size, out UIntPtr written);
-    [DllImport("kernel32.dll")] private static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] data, UIntPtr size, out UIntPtr read);
 
-    public sealed class Area { public double x, y, width, height; }
-    public sealed class Target { public string handle; public bool pinned; public double scale = 1; public int minWidth = 260; public int minHeight = 240; public Area[] rightAreas; }
-    public sealed class Command { public string op; public Target[] windows; public string handle; }
-    private static readonly JavaScriptSerializer Serializer = new JavaScriptSerializer();
-    private static readonly BlockingCollection<object> Output = new BlockingCollection<object>();
-    private static readonly ConcurrentQueue<Command> Commands = new ConcurrentQueue<Command>();
-    private static readonly List<Target> Targets = new List<Target>();
+    public sealed class Target { public string handle; public double scale = 1; public bool pinned; internal IntPtr Window; }
+    public sealed class Command { public string op, handle; public Target[] windows; public int id; public uint pid; }
+    private const uint Move=0x200, LeftDown=0x201, LeftUp=0x202, RightDown=0x204, RightUp=0x205, Wheel=0x20A, Wake=0x8001;
     private static readonly HookProc Callback = HandleMouse;
-    private static uint Owner;
-    private static IntPtr Hook, Captured, RightCaptured, Hovered, LastClick;
-    private static Point DownPoint, LastClickPoint;
-    private static Rect DownBounds;
-    private static uint LastClickTime, LastMoveTime;
+    private static readonly BlockingCollection<object> Output = new BlockingCollection<object>();
+    private static readonly ConcurrentQueue<Target[]> Updates = new ConcurrentQueue<Target[]>();
+    private static readonly List<Target> Targets = new List<Target>();
+    private static uint Owner, LoopThread, LastClickTime, LastMoveTime;
+    private static volatile uint MenuPid;
+    private static readonly IntPtr DismissedMenu=new IntPtr(-1);
+    private static IntPtr Hook, Left, Right, Hovered, LastClick, LastPressed;
+    private static Point LastClickPoint;
     private static int ClickCount = 1;
-    private static string Manipulation;
-    private static volatile bool Stopping;
-    private static bool HasDrawerTiles;
-    private static IconHitTester Icons;
 
-    private static string ClassName(IntPtr window) { var name = new StringBuilder(128); GetClassName(window, name, name.Capacity); return name.ToString(); }
-    private static bool Owned(IntPtr window) { uint pid; GetWindowThreadProcessId(window, out pid); return IsWindow(window) && pid == Owner; }
-    private static IntPtr Handle(Target target) { long value; return long.TryParse(target.handle, out value) ? new IntPtr(value) : IntPtr.Zero; }
-    private static Target FindTarget(IntPtr window) { return Targets.Find(target => Handle(target) == window); }
+    private static bool Owned(IntPtr window) { uint pid; return window!=IntPtr.Zero && GetWindowThreadProcessId(window,out pid)!=0 && pid==Owner; }
+    private static string ClassName(IntPtr window) { var n=new StringBuilder(80); GetClassName(window,n,n.Capacity); return n.ToString(); }
+    private static bool ShellRoot(IntPtr root) {
+        var shell=GetShellWindow(); if(shell==IntPtr.Zero)return false;
+        if(root==shell)return true;
+        uint s,r; GetWindowThreadProcessId(shell,out s); GetWindowThreadProcessId(root,out r);
+        return s!=0 && s==r && ClassName(root)=="WorkerW";
+    }
     private static bool DesktopAt(Point point) {
-        var hit = WindowFromPoint(point); string cls = ClassName(hit);
-        if (cls != "SysListView32" && cls != "SHELLDLL_DefView" && cls != "Progman" && cls != "WorkerW") return false;
-        return ShellDesktopRoot(GetAncestor(hit, 2)); // GA_ROOT
+        var hit=WindowFromPoint(point);
+        if(!ShellRoot(GetAncestor(hit,2)))return false;
+        string cls=ClassName(hit);
+        return cls=="SysListView32" || cls=="SHELLDLL_DefView" || cls=="Progman" || cls=="WorkerW";
     }
-    private static bool ShellDesktopRoot(IntPtr root) {
-        var shell = GetShellWindow();
-        if (shell == IntPtr.Zero) return false;
-        if (root == shell) return true;
-        uint shellPid, rootPid; GetWindowThreadProcessId(shell, out shellPid); GetWindowThreadProcessId(root, out rootPid);
-        return shellPid != 0 && rootPid == shellPid && ClassName(root) == "WorkerW";
+    private static bool InMenu(out IntPtr owner) {
+        var info=new GuiInfo { Size=Marshal.SizeOf(typeof(GuiInfo)) };
+        bool active=GetGUIThreadInfo(0,ref info) && (info.Flags & 0x1C)!=0;
+        owner=info.MenuOwner;return active;
     }
-    private static bool Inside(Rect rect, Point point, double scale) {
-        if (point.X < rect.Left || point.Y < rect.Top || point.X >= rect.Right || point.Y >= rect.Bottom) return false;
-        double radius = 20 * Math.Max(.5, scale);
-        double x = Math.Min(point.X - rect.Left, rect.Right - point.X - 1), y = Math.Min(point.Y - rect.Top, rect.Bottom - point.Y - 1);
-        return x >= radius || y >= radius || (x - radius) * (x - radius) + (y - radius) * (y - radius) <= radius * radius;
+    private static bool InMenu() { IntPtr owner;return InMenu(out owner); }
+    private static bool Inside(Rect r, Point p, double scale) {
+        int x=Math.Min(p.X-r.Left,r.Right-p.X-1), y=Math.Min(p.Y-r.Top,r.Bottom-p.Y-1);
+        if(x<0 || y<0)return false;
+        double radius=20*Math.Max(.5,scale);
+        return x>=radius || y>=radius || (x-radius)*(x-radius)+(y-radius)*(y-radius)<=radius*radius;
     }
-
-    // LVM_HITTEST needs a buffer in the ListView process. Only our 24-byte scratch allocation
-    // is read/written; no file names, item text, Explorer settings or existing memory are changed.
-    private sealed class IconHitTester : IDisposable {
-        private IntPtr list, process, buffer;
-        private void Resolve() {
-            if (IsWindow(list) && ClassName(list) == "SysListView32" && ShellDesktopRoot(GetAncestor(list,2))) return;
-            Dispose();
-            EnumWindows(delegate(IntPtr window, IntPtr unused) {
-                if (!ShellDesktopRoot(window)) return true;
-                IntPtr view = FindWindowEx(window, IntPtr.Zero, "SHELLDLL_DefView", null);
-                if (view != IntPtr.Zero) list = FindWindowEx(view, IntPtr.Zero, "SysListView32", null);
-                return list == IntPtr.Zero;
-            }, IntPtr.Zero);
-            if (list == IntPtr.Zero) return;
-            uint pid; GetWindowThreadProcessId(list, out pid);
-            process = OpenProcess(0x0038, false, pid);
-            if (process != IntPtr.Zero) buffer = VirtualAllocEx(process, IntPtr.Zero, new UIntPtr(24), 0x3000, 0x04);
+    private static bool Embedded(IntPtr h) { var parent=GetParent(h);return parent!=IntPtr.Zero && ClassName(parent)=="WorkerW" && ShellRoot(GetAncestor(parent,2)); }
+    private static bool Covers(Target t, Point p) {
+        Rect r;return GetWindowRect(t.Window,out r) && Inside(r,p,t.scale) && Owned(t.Window) && IsWindowVisible(t.Window) && Embedded(t.Window);
+    }
+    private static Target At(Point p) {
+        if(!DesktopAt(p))return null;
+        Target best=null;
+        foreach(var t in Targets) {
+            if(!Covers(t,p))continue;
+            if(best==null){best=t;continue;}
+            // Cards can overlap after a drag or an unpin. Match sibling paint order.
+            for(var h=GetWindow(best.Window,3);h!=IntPtr.Zero;h=GetWindow(h,3))if(h==t.Window){best=t;break;}
         }
-        public bool Hit(Point point) {
-            Resolve();
-            if (list == IntPtr.Zero || !IsWindowVisible(list)) return false;
-            if (buffer == IntPtr.Zero) return true; // Fail closed: preserve icon interaction.
-            ScreenToClient(list, ref point);
-            var bytes = new byte[24];
-            Array.Copy(BitConverter.GetBytes(point.X), 0, bytes, 0, 4); Array.Copy(BitConverter.GetBytes(point.Y), 0, bytes, 4, 4);
-            UIntPtr count;
-            if (!WriteProcessMemory(process, buffer, bytes, new UIntPtr(24), out count)) return true;
-            IntPtr result;
-            if (SendMessageTimeout(list, 0x1012, IntPtr.Zero, buffer, 2, 25, out result) == IntPtr.Zero) return true;
-            if (!ReadProcessMemory(process, buffer, bytes, new UIntPtr(24), out count)) return true;
-            return result.ToInt64() >= 0 && (BitConverter.ToUInt32(bytes, 8) & 14) != 0;
-        }
-        public object Rectangles() {
-            Resolve(); var rectangles = new List<object>();
-            if (list == IntPtr.Zero || buffer == IntPtr.Zero || !IsWindowVisible(list)) return rectangles;
-            IntPtr total; if (SendMessageTimeout(list, 0x1004, IntPtr.Zero, IntPtr.Zero, 2, 25, out total) == IntPtr.Zero) return rectangles;
-            for (int index = 0; index < Math.Min(10, total.ToInt32()); index++) {
-                var bytes = new byte[24]; bytes[0] = 1; // LVIR_ICON: only icon geometry, never item text.
-                UIntPtr count; if (!WriteProcessMemory(process, buffer, bytes, new UIntPtr(24), out count)) break;
-                IntPtr result; if (SendMessageTimeout(list, 0x100E, new IntPtr(index), buffer, 2, 25, out result) == IntPtr.Zero || result == IntPtr.Zero) continue;
-                if (!ReadProcessMemory(process, buffer, bytes, new UIntPtr(24), out count)) continue;
-                var start = new Point { X = BitConverter.ToInt32(bytes, 0), Y = BitConverter.ToInt32(bytes, 4) };
-                var end = new Point { X = BitConverter.ToInt32(bytes, 8), Y = BitConverter.ToInt32(bytes, 12) };
-                ClientToScreen(list, ref start); ClientToScreen(list, ref end);
-                rectangles.Add(new { x = start.X, y = start.Y, width = end.X - start.X, height = end.Y - start.Y });
-            }
-            return rectangles;
-        }
-        public void Dispose() { if (buffer != IntPtr.Zero && process != IntPtr.Zero) VirtualFreeEx(process, buffer, UIntPtr.Zero, 0x8000); if (process != IntPtr.Zero) CloseHandle(process); buffer = process = list = IntPtr.Zero; }
+        return best;
     }
-
     public static object CheckRoute(string handle, uint owner, int x, int y) {
-        SetThreadDpiAwarenessContext(new IntPtr(-4)); Owner = owner;
-        var window = new IntPtr(long.Parse(handle)); var point = new Point { X = x, Y = y };
-        Rect rect; GetWindowRect(window, out rect);
-        using (var icons = new IconHitTester()) {
-            bool icon = DesktopAt(point) && icons.Hit(point);
-            return new { allowed = Owned(window) && IsWindowVisible(window) && DesktopAt(point) && !icon && Inside(rect, point, 1), iconPriority = icon, hitClass = ClassName(WindowFromPoint(point)) };
+        SetThreadDpiAwarenessContext(new IntPtr(-4)); Owner=owner;
+        var h=new IntPtr(long.Parse(handle));var p=new Point{X=x,Y=y};
+        var hit=WindowFromPoint(p);bool direct=hit==h || IsChild(h,hit),menu=InMenu();
+        return new {allowed=Covers(new Target{Window=h,scale=GetDpiForWindow(h)/96.0},p) && (direct || DesktopAt(p)) && !menu,direct=direct,menu=menu,hitClass=ClassName(hit)};
+    }
+    private static Target Find(IntPtr h) { if(h!=IntPtr.Zero)foreach(var t in Targets)if(t.Window==h && Owned(h))return t;return null; }
+    private static bool Pressed(int key) { return (GetAsyncKeyState(key)&0x8000)!=0; }
+    private static void Emit(Target t,string type,MouseData d,bool right=false) {
+        Rect r;if(t==null || !GetWindowRect(t.Window,out r))return;
+        Output.Add(new {handle=t.handle,type=type,x=d.Point.X-r.Left,y=d.Point.Y-r.Top,button=right?"right":"left",leftDown=Left!=IntPtr.Zero,rightDown=Right!=IntPtr.Zero,alt=Pressed(0x12),shift=Pressed(0x10),delta=(short)(d.Data>>16),clickCount=right?1:ClickCount});
+    }
+    private static bool Route(uint type,MouseData d) {
+        bool right=type==RightDown || type==RightUp;
+        if(type==LeftUp || type==RightUp) {
+            var h=right?Right:Left;if(h==IntPtr.Zero)return false; // Press started elsewhere.
+            if(right)Right=IntPtr.Zero;else Left=IntPtr.Zero;
+            Emit(Find(h),"up",d,right); // Still swallow our release if the card disappeared.
+            if(Targets.Count==0)PostThreadMessage(LoopThread,Wake,UIntPtr.Zero,IntPtr.Zero);
+            return true;
         }
-    }
-    public static object IconRectangles() { SetThreadDpiAwarenessContext(new IntPtr(-4)); using (var icons = new IconHitTester()) return icons.Rectangles(); }
-
-    private static void Emit(IntPtr target, string type, MouseData data, bool down, int delta, bool right = false) {
-        Rect rect; if (!GetWindowRect(target, out rect)) return;
-        Output.Add(new { handle = target.ToInt64().ToString(), type = type, x = data.Point.X - rect.Left, y = data.Point.Y - rect.Top, width = rect.Right - rect.Left, height = rect.Bottom - rect.Top, button = right ? "right" : "left", leftDown = down, rightDown = right && type == "down", alt = (GetAsyncKeyState(0x12) & 0x8000) != 0, shift = (GetAsyncKeyState(0x10) & 0x8000) != 0, delta = delta, clickCount = right ? 1 : ClickCount });
-    }
-
-    private static IntPtr HandleMouse(int code, IntPtr message, IntPtr address) {
-        if (code < 0 || (Targets.Count == 0 && RightCaptured == IntPtr.Zero)) return CallNextHookEx(Hook, code, message, address);
-        uint type = (uint)message.ToInt64();
-        if ((type==0x0204 && !HasDrawerTiles) || (type==0x0205 && RightCaptured==IntPtr.Zero)) return CallNextHookEx(Hook, code, message, address);
-        if (type != 0x0200 && type != 0x0201 && type != 0x0202 && type != 0x0204 && type != 0x0205 && type != 0x020A) return CallNextHookEx(Hook, code, message, address);
-        // MSLLHOOKSTRUCT.pt is in physical screen pixels. Windows can enter a low-level
-        // callback in a different DPI context than Run(), virtualizing GetWindowRect
-        // and ScreenToClient. Keep hit testing, icon priority and emitted offsets in
-        // the same physical space. Electron converts to input DIPs exactly once.
-        var previousDpi = SetThreadDpiAwarenessContext(new IntPtr(-4));
-        try { if (previousDpi != IntPtr.Zero && RouteMouse(type, address)) return new IntPtr(1); }
-        finally { if (previousDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpi); }
-        return CallNextHookEx(Hook, code, message, address);
-    }
-
-    private static bool RouteMouse(uint type, IntPtr address) {
-        try {
-            var data = (MouseData)Marshal.PtrToStructure(address, typeof(MouseData));
-            if(type == 0x0204 || type == 0x0205) return DrawerRightButton(type, data);
-            Target target = FindTarget(Captured);
-            if (target == null || !Owned(Captured)) { Captured = IntPtr.Zero; Manipulation = null; target = null; }
-            if (target == null && type != 0x0202) {
-                uint hitPid; IntPtr hit = WindowFromPoint(data.Point); GetWindowThreadProcessId(hit, out hitPid);
-                if (hitPid == Owner) {
-                    // Observe pinned windows for dragging, but let Windows deliver their input normally.
-                    for (var window = hit; window != IntPtr.Zero; window = GetParent(window)) { var candidate = FindTarget(window); if (candidate != null && candidate.pinned) { target = candidate; break; } }
-                } else if (DesktopAt(data.Point)) {
-                    for (int i = Targets.Count - 1; i >= 0; i--) {
-                        var candidate = Targets[i]; IntPtr window = Handle(candidate); Rect rect;
-                        if (candidate.pinned || !Owned(window) || !IsWindowVisible(window) || !GetWindowRect(window, out rect)) continue;
-                        if (Inside(rect, data.Point, candidate.scale)) { target = candidate; break; }
-                    }
-                    if (target != null && Icons.Hit(data.Point)) target = null;
+        if(type==Move && (Left==DismissedMenu || Right==DismissedMenu))return false;
+        var t=type==Move ? Find(Left!=IntPtr.Zero?Left:Right) : null;
+        if(t==null){
+            t=At(d.Point);IntPtr menu;
+            if(t!=null && InMenu(out menu)) {
+                // Outside our Shell popup, but still on a card: dismiss without letting
+                // Explorer replay this press on an icon. Other applications' menus win.
+                uint pid;
+                if((type==LeftDown || type==RightDown) && MenuPid!=0 && GetWindowThreadProcessId(menu,out pid)!=0 && pid==MenuPid) {
+                    if(right)Right=DismissedMenu;else Left=DismissedMenu;
+                    LastClick=IntPtr.Zero;PostMessage(menu,0x001F,IntPtr.Zero,IntPtr.Zero);return true; // WM_CANCELMODE
                 }
+                t=null;
             }
-            if (target == null) {
-                if(type==0x0201)LastClick=IntPtr.Zero;
-                if (Hovered != IntPtr.Zero && Owned(Hovered)) Emit(Hovered, "leave", data, false, 0);
-                Hovered = IntPtr.Zero;
-                return false;
-            }
-            IntPtr handle = Handle(target);
-            if (type == 0x0201) {
-                Captured = handle; DownPoint = data.Point; GetWindowRect(handle, out DownBounds);
-                uint dpi=(uint)Math.Round(target.scale*96);
-                ClickCount = LastClick == handle && ClickCount == 1 && data.Time - LastClickTime <= GetDoubleClickTime() && Math.Abs(data.Point.X - LastClickPoint.X) <= GetSystemMetricsForDpi(36,dpi)/2 && Math.Abs(data.Point.Y - LastClickPoint.Y) <= GetSystemMetricsForDpi(37,dpi)/2 ? 2 : 1;
-                LastClick = handle; LastClickTime = data.Time; LastClickPoint = data.Point;
-            }
-            if (type == 0x0200 && Captured != IntPtr.Zero && Manipulation != null) {
-                Point point = new Point { X = DownBounds.Left, Y = DownBounds.Top };
-                int width = DownBounds.Right - DownBounds.Left, height = DownBounds.Bottom - DownBounds.Top;
-                if (Manipulation == "move") { point.X += data.Point.X - DownPoint.X; point.Y += data.Point.Y - DownPoint.Y; }
-                else { width = Math.Max((int)Math.Ceiling(target.minWidth * target.scale), width + data.Point.X - DownPoint.X); height = Math.Max((int)Math.Ceiling(target.minHeight * target.scale), height + data.Point.Y - DownPoint.Y); }
-                IntPtr parent = GetParent(handle); if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
-                int maximum = (int)Math.Round(1600 * target.scale);
-                SetWindowPos(handle, IntPtr.Zero, point.X, point.Y, Math.Min(width, maximum), Math.Min(height, maximum), 0x0010 | 0x0004 | (Manipulation == "move" ? 0x0001U : 0U));
-            }
-            if (!target.pinned) {
-                if (type == 0x0200) {
-                    if (Captured == IntPtr.Zero && (GetAsyncKeyState(1) & 0x8000) != 0) return false;
-                    if (data.Time - LastMoveTime >= 8) { Emit(handle, "move", data, Captured != IntPtr.Zero, 0); LastMoveTime = data.Time; }
-                } else Emit(handle, type == 0x0201 ? "down" : type == 0x0202 ? "up" : "wheel", data, type == 0x0201, (short)(data.Data >> 16));
-                Hovered = handle;
-            }
-            bool suppress = !target.pinned && type != 0x0200;
-            if (type == 0x0202) { Captured = IntPtr.Zero; Manipulation = null; }
-            return suppress;
-        } catch { return false; } // On failure, leave the event to Windows.
-    }
-
-    // Only right presses over published drawer tiles are ours. Leave the desktop
-    // background, other widgets, menus, other applications and real Explorer icons alone.
-    private static bool DrawerRightButton(uint type, MouseData data) {
-        if(type==0x0205) {
-            var h=RightCaptured;RightCaptured=IntPtr.Zero;
-            if(h==IntPtr.Zero)return false;
-            if(Owned(h) && FindTarget(h)!=null) Emit(h,"up",data,false,0,true);
-            return true; // Consume the matching release even if that tile has just gone away.
         }
-        RightCaptured=IntPtr.Zero;LastClick=IntPtr.Zero;
-        if(Captured!=IntPtr.Zero || !DesktopAt(data.Point))return false;
-        for(int i=Targets.Count-1;i>=0;i--){
-            var t=Targets[i];IntPtr h=Handle(t);Rect r;
-            if(t.pinned || !Owned(h) || !IsWindowVisible(h) || !GetWindowRect(h,out r) || !Inside(r,data.Point,t.scale))continue;
-            if(t.rightAreas==null || t.rightAreas.Length==0) return false;
-            double x=(double)(data.Point.X-r.Left)/(r.Right-r.Left), y=(double)(data.Point.Y-r.Top)/(r.Bottom-r.Top);
-            foreach(var a in t.rightAreas) if(x>=a.x && x<a.x+a.width && y>=a.y && y<a.y+a.height){
-                if(Icons.Hit(data.Point))return false;
-                RightCaptured=h;Emit(h,"down",data,false,0,true);return true;
-            }
+        if(type==LeftDown || type==RightDown) {
+            // WorkerW children don't always get a blur when the next click goes to Explorer.
+            if(LastPressed!=IntPtr.Zero && (t==null || t.Window!=LastPressed) && Find(LastPressed)!=null)
+                Output.Add(new {handle=LastPressed.ToInt64().ToString(),type="outside"});
+            LastPressed=t==null?IntPtr.Zero:t.Window;
+        }
+        if(Hovered!=IntPtr.Zero && (t==null || Hovered!=t.Window)){Emit(Find(Hovered),"leave",d);Hovered=IntPtr.Zero;}
+        if(type==Move) {
+            if(t!=null && (Left!=IntPtr.Zero || Right!=IntPtr.Zero || (!Pressed(1) && !Pressed(2)))){Hovered=t.Window;Emit(t,"move",d);}
             return false;
         }
-        return false;
+        if(t==null){if(type!=Wheel)LastClick=IntPtr.Zero;return false;}
+        if(type==Wheel){Emit(t,"wheel",d);return true;}
+        if(right){Right=t.Window;LastClick=IntPtr.Zero;}
+        else {
+            Left=t.Window;uint dpi=(uint)Math.Round(t.scale*96);
+            ClickCount=LastClick==Left && ClickCount==1 && d.Time-LastClickTime<=GetDoubleClickTime() && Math.Abs(d.Point.X-LastClickPoint.X)<=GetSystemMetricsForDpi(36,dpi)/2 && Math.Abs(d.Point.Y-LastClickPoint.Y)<=GetSystemMetricsForDpi(37,dpi)/2 ? 2 : 1;
+            LastClick=Left;LastClickTime=d.Time;LastClickPoint=d.Point;
+        }
+        Hovered=t.Window;Emit(t,"down",d,right);return true;
     }
-
-    public static int Run(uint owner) {
-        Owner = owner; SetThreadDpiAwarenessContext(new IntPtr(-4)); Icons = new IconHitTester();
-        var writer = new Thread(delegate() { foreach (var item in Output.GetConsumingEnumerable()) { try { Console.WriteLine(Serializer.Serialize(item)); } catch { Stopping = true; break; } } }) { IsBackground = true };
-        writer.Start();
-        var reader = new Thread(delegate() {
-            try { string line; var parser = new JavaScriptSerializer(); while ((line = Console.ReadLine()) != null) { if (line.Length < 200000) Commands.Enqueue(parser.Deserialize<Command>(line)); } } catch { }
-            Stopping = true;
-        }) { IsBackground = true };
-        reader.Start();
-        Hook = SetWindowsHookEx(14, Callback, GetModuleHandle(null), 0);
-        if (Hook == IntPtr.Zero) throw new InvalidOperationException("Desktop mouse routing could not be initialized.");
-        var timer = new System.Windows.Forms.Timer { Interval = 15 };
-        timer.Tick += delegate {
-            if (Stopping) { Application.ExitThread(); return; }
-            Command command;
-            while (Commands.TryDequeue(out command)) {
-                if (command.op == "targets") {
-                    Targets.Clear();
-                    if (command.windows != null) foreach (var target in command.windows) if (Owned(Handle(target))) Targets.Add(target);
-                    HasDrawerTiles=Targets.Exists(t=>t.rightAreas!=null && t.rightAreas.Length!=0);
-                    if (FindTarget(Captured) == null) { Captured = IntPtr.Zero; Manipulation = null; }
-                } else if (command.op == "stop" && Captured.ToInt64().ToString() == command.handle) Manipulation = null;
-                else if ((command.op == "move" || command.op == "resize") && Captured.ToInt64().ToString() == command.handle) Manipulation = command.op;
+    private static IntPtr HandleMouse(int code,IntPtr message,IntPtr address) {
+        uint type=(uint)message.ToInt64();
+        if(code>=0 && (type==Move || type==LeftDown || type==LeftUp || type==RightDown || type==RightUp || type==Wheel)) {
+            var d=(MouseData)Marshal.PtrToStructure(address,typeof(MouseData));
+            if(type!=Move || d.Time-LastMoveTime>=16) {
+                if(type==Move)LastMoveTime=d.Time;
+                // The low-level callback can enter a different DPI context than the loop.
+                var prior=SetThreadDpiAwarenessContext(new IntPtr(-4));
+                try { if(prior!=IntPtr.Zero && Route(type,d))return new IntPtr(1); }
+                finally { if(prior!=IntPtr.Zero)SetThreadDpiAwarenessContext(prior); }
             }
-        };
-        timer.Start(); Output.Add(new { ready = true });
-        try { Application.Run(); }
-        finally { timer.Stop(); timer.Dispose(); UnhookWindowsHookEx(Hook); Icons.Dispose(); Output.CompleteAdding(); writer.Join(500); }
+        }
+        return CallNextHookEx(Hook,code,message,address);
+    }
+    private static void ApplyUpdates() {
+        Target[] windows;
+        while(Updates.TryDequeue(out windows)) {
+            Targets.Clear();foreach(var t in windows){t.Window=new IntPtr(long.Parse(t.handle));if(Owned(t.Window))Targets.Add(t);}
+            if(Find(Hovered)==null)Hovered=IntPtr.Zero;
+        }
+        if(Hook==IntPtr.Zero && Targets.Count!=0) {
+            Hook=SetWindowsHookEx(14,Callback,GetModuleHandle(null),0);
+            if(Hook==IntPtr.Zero)throw new InvalidOperationException("Could not initialize desktop input.");
+        } else if(Hook!=IntPtr.Zero && Targets.Count==0 && Left==IntPtr.Zero && Right==IntPtr.Zero){UnhookWindowsHookEx(Hook);Hook=IntPtr.Zero;}
+    }
+    public static int Run(uint owner,Action<string> focus) {
+        Owner=owner;LoopThread=GetCurrentThreadId();SetThreadDpiAwarenessContext(new IntPtr(-4));
+        Message msg;PeekMessage(out msg,IntPtr.Zero,0,0,0); // Create the thread message queue before reading stdin.
+        var writer=new Thread(delegate(){var json=new JavaScriptSerializer();try{foreach(var item in Output.GetConsumingEnumerable())Console.WriteLine(json.Serialize(item));}catch{PostThreadMessage(LoopThread,0x12,UIntPtr.Zero,IntPtr.Zero);}}){IsBackground=true};
+        writer.Start();
+        var reader=new Thread(delegate(){
+            try {
+                var json=new JavaScriptSerializer();string line;
+                while((line=Console.ReadLine())!=null) {
+                    var c=json.Deserialize<Command>(line);
+                    if(c.op=="menu"){MenuPid=c.pid;continue;}
+                    if(c.op=="targets"){Updates.Enqueue(c.windows);PostThreadMessage(LoopThread,Wake,UIntPtr.Zero,IntPtr.Zero);continue;}
+                    bool ok=false;
+                    try {
+                        if(c.op=="focus") { var h=new IntPtr(long.Parse(c.handle));if(Owned(h) && Embedded(h) && !InMenu()){focus(c.handle);ok=true;} }
+                        if(c.op=="check") ok=Array.TrueForAll(c.windows,delegate(Target t){var h=new IntPtr(long.Parse(t.handle));return Owned(h) && (t.pinned?GetParent(h)==IntPtr.Zero:Embedded(h));});
+                    } catch { ok=false; }
+                    Output.Add(new { reply=c.id,ok=ok });
+                }
+            } finally { PostThreadMessage(LoopThread,0x12,UIntPtr.Zero,IntPtr.Zero); }
+        }){IsBackground=true};reader.Start();
+        Output.Add(new {ready=true});
+        try{while(GetMessage(out msg,IntPtr.Zero,0,0)>0){if(msg.Id==Wake)ApplyUpdates();else DispatchMessage(ref msg);}}
+        finally{if(Hook!=IntPtr.Zero)UnhookWindowsHookEx(Hook);Output.CompleteAdding();writer.Join(500);}
         return 0;
     }
 }

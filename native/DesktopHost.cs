@@ -143,7 +143,6 @@ internal static class DesktopHost
         SetThreadDpiAwarenessContext(new IntPtr(-4));
         if (args.Length > 0 && args[0] == "drawer-files") return DesktopDrawer.Files(args);
         if (args.Length == 1 && args[0] == "drawer-artwork") return DrawerArtwork.Batch();
-        if (args.Length > 0 && args[0] == "drawer-menu") return DrawerContextMenu.Show(args);
         if (args.Length > 0 && (args[0] == "drawer-lease" || args[0] == "drawer-recover")) return DesktopDrawer.Lease(args);
         if (args.Length == 0 || args[0] == "probe")
         {
@@ -225,7 +224,6 @@ internal static class DesktopHost
             return Describe(window);
         }
         if (args[0] == "route-check") return DesktopInputBridge.CheckRoute(args[1], uint.Parse(args[2]), int.Parse(args[3]), int.Parse(args[4]));
-        if (args[0] == "icon-rects") return DesktopInputBridge.IconRectangles();
         if (args[0] == "focus")
         {
             var window = OwnedWindow(args[1], args[2]);
@@ -310,7 +308,11 @@ internal static class DesktopHost
     public static int Main(string[] args)
     {
         Console.OutputEncoding = new UTF8Encoding(false);
-        try { if (args.Length > 0 && args[0] == "bridge") return DesktopInputBridge.Run(uint.Parse(args[1])); Console.WriteLine(new JavaScriptSerializer().Serialize(Run(args))); return 0; }
+        try {
+            if(args.Length==2 && args[0]=="drawer-menu-host"){SetThreadDpiAwarenessContext(new IntPtr(-4));return DrawerContextMenu.Run(uint.Parse(args[1]));}
+            if (args.Length > 0 && args[0] == "bridge") return DesktopInputBridge.Run(uint.Parse(args[1]), handle => Run(new[]{"focus",handle,args[1]}));
+            Console.WriteLine(new JavaScriptSerializer().Serialize(Run(args)));return 0;
+        }
         catch (Exception error) { Console.Error.WriteLine(error.Message); return 1; }
     }
 }

@@ -32,8 +32,7 @@ async function mouse(page, locator, mode = 'click', extra = []) {
   const box = await locator.boundingBox();
   const [width, height] = await page.evaluate(() => [innerWidth, innerHeight]);
   const owner = await app.evaluate(() => process.pid);
-  // Desktop icons take priority. Only send input to an unobstructed point inside the
-  // intended element, including on laptops where icons can overlap the left column.
+  // Only send input over the intended card and never through a covering application.
   for (const [fx, fy] of [[.5, .5], [.8, .25], [.7, .75], [.25, .25], [.25, .75]]) {
     const cx = box.x + box.width * fx, cy = box.y + box.height * fy;
     const x = info.bounds.x + Math.round(cx * info.bounds.width / width);
@@ -71,13 +70,13 @@ try {
 
   await native('show-desktop'); shownDesktop = true;
   await new Promise(resolve => setTimeout(resolve, 700));
-  const iconRects = await native('icon-rects');
-  if (iconRects.length) {
-    const icon = iconRects[0];
-    const route = await native('route-check', (await windowInfo(calendar)).handle, owner, Math.round(icon.x + icon.width / 2), Math.round(icon.y + icon.height / 2));
-    expect(route.iconPriority).toBe(true);
-    expect(route.allowed).toBe(false);
-  }
+  const ci=await windowInfo(calendar);
+  expect((await native('route-check',ci.handle,owner,ci.bounds.x,ci.bounds.y)).allowed).toBe(false);
+  await calendar.evaluate(()=>{window.__moduleRight=[];for(const t of ['mousedown','mouseup','contextmenu'])window.addEventListener(t,e=>{if(e.button===2)window.__moduleRight.push([t,e.defaultPrevented]);});});
+  await mouse(calendar,calendar.locator('.frost-title'),'right'); // No file tile or custom menu here.
+  const right=await calendar.evaluate(()=>window.__moduleRight);
+  for(const t of ['mousedown','mouseup','contextmenu'])expect(right.some(([type])=>type===t)).toBe(true);
+  expect(right).toContainEqual(['contextmenu',true]);
 
   const today = await manager.evaluate(() => window.wallnote.getState().then(state => state.calendarDate));
   const tomorrow = await calendar.evaluate(date => { const value = new Date(`${date}T12:00:00`); value.setDate(value.getDate() + 1); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`; }, today);
@@ -152,7 +151,7 @@ try {
   expect(saved.settings.topmostWidgets).toEqual([]);
   expect(saved.notes.find(item => item.id === 'native-note').content).toContain('98765');
   expect(saved.events).toHaveLength(1);
-  console.log(`Native desktop input passed: icon priority, background date clicks/scrolling, explicit pin/unpin, text input, drag/resize limits, aligned restore and note switching. Profile: ${profile}`);
+  console.log(`Native desktop input passed: rounded card ownership, both buttons, background date clicks/scrolling, pin/unpin, text input, drag/resize limits and note switching. Profile: ${profile}`);
 } catch (error) {
   if (app) console.error(await app.windows().find(page => !new URL(page.url()).search)?.evaluate(() => window.wallnote.getDesktopStatus()).catch(() => null));
   throw error;

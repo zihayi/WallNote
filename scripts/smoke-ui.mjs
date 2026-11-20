@@ -99,7 +99,14 @@ try {
   await page.screenshot({ path: 'test-results/tasks.png', fullPage: true });
 
   await nav('壁纸库').click();
-  await expect(page.locator('.wallpaper-card')).toHaveCount(6);
+  await expect(page.locator('.wallpaper-card')).toHaveCount(12);
+  await expect.poll(()=>page.locator('.wallpaper-card img').evaluateAll(images=>Promise.all(images.map(async image=>{image.loading='eager';await image.decode();return image.naturalWidth;})))).toEqual(Array(12).fill(480));
+  await page.getByRole('button',{name:'预览壁纸：竹间月',exact:true}).click();
+  await expect.poll(()=>page.locator('.preview-image').evaluate(async img=>{await img.decode();return [img.naturalWidth,img.naturalHeight];})).toEqual([1920,1080]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'抽象',exact:true}).click();await expect(page.locator('.wallpaper-card')).toHaveCount(4);
+  await page.getByRole('button',{name:'全部',exact:true}).click();
+  await page.screenshot({path:'test-results/wallpapers.png',fullPage:true});
   await page.getByRole('button', { name: '预览壁纸：日落之前', exact: true }).click();
   await page.getByRole('button', { name: '仅在工作台预览', exact: true }).click();
   await nav('工作台').click();

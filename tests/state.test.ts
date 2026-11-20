@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { allWallpapers, createInitialState, createNote, createTask, isValidState, reduceState } from '../shared/state';
+import { allWallpapers, builtInWallpapers, createInitialState, createNote, createTask, isValidState, reduceState } from '../shared/state';
 import { StateStore } from '../electron/store';
 
 const directories: string[] = [];
@@ -46,7 +46,7 @@ describe('state integrity', () => {
     expect(next.selectedWallpaperId).toBe('mist');
     expect(next.appliedWallpaperId).toBeNull();
     expect(next.favorites).not.toContain('custom');
-    expect(allWallpapers(next)).toHaveLength(6);
+    expect(allWallpapers(next)).toEqual(builtInWallpapers);
     expect(isValidState(next)).toBe(true);
   });
 

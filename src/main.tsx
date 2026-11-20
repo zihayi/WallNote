@@ -1,13 +1,7 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import { DesktopEventEditor } from './components/DesktopEventEditor';
-import './styles.css';
-import './planner.css';
-
 const query = new URLSearchParams(location.search);
-if (window.wallnote && (query.has('widget') || query.has('note'))) document.documentElement.dataset.widgetMotion ??= 'staged';
-const eventWindow = !!window.wallnote && query.get('editor') === 'event';
-if (eventWindow) document.documentElement.dataset.view = 'event-editor';
-
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{eventWindow ? <DesktopEventEditor /> : <App />}</React.StrictMode>);
+const view=query.has('wallpaper')?'wallpaper':query.has('workspace')?'workspace':query.has('widget')||query.has('note')?'widget':window.wallnote&&query.get('editor')==='event'?'event-editor':'manager';
+const root=document.getElementById('root')!;
+document.documentElement.dataset.view=view;
+if(window.wallnote && view==='widget')document.documentElement.dataset.widgetMotion??='staged';
+const ready=view==='wallpaper'?import('./wallpaper').then(m=>m.showWallpaper(root,Number(query.get('display')))):import('./render').then(m=>m.render(root,view));
+void ready.catch(error=>{console.error(error);root.textContent='加载失败，请重新打开 WallNote。';});

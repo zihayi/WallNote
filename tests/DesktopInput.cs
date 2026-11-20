@@ -71,7 +71,8 @@ internal static class DesktopInput
                 int dx = int.Parse(args[3]), dy = int.Parse(args[4]);
                 for (int i = 1; i <= 15; i++) { SetCursorPos(x + dx * i / 15, y + dy * i / 15); Thread.Sleep(30); }
             }
-            mouse_event(up, 0, 0, 0, UIntPtr.Zero); pressed = false;
+            var released=DateTime.UtcNow;mouse_event(up, 0, 0, 0, UIntPtr.Zero); pressed = false;
+            if(right)Console.WriteLine("releaseMs="+(long)(released-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds);
             if(args[0]=="double") {
                 Thread.Sleep(30);
                 GetWindowThreadProcessId(WindowFromPoint(new Point { X=x, Y=y }),out hitOwner);

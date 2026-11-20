@@ -22,7 +22,7 @@ export function PhoneSettings({ state }: { state: AppState }) {
     if (!isDesktop) return;
     let active = true, pending = false;
     const refresh = async () => {
-      if (pending) return;
+      if (pending || document.hidden) return;
       pending = true;
       const before = revision.current;
       try { const next = await api.wifiReceiverControl('status'); if (active && before === revision.current) setWifi(next); }
@@ -30,7 +30,8 @@ export function PhoneSettings({ state }: { state: AppState }) {
       finally { pending = false; }
     };
     void refresh(); const timer = setInterval(() => void refresh(), 2000);
-    return () => { active = false; clearInterval(timer); };
+    document.addEventListener('visibilitychange',refresh);
+    return () => { active = false; clearInterval(timer);document.removeEventListener('visibilitychange',refresh); };
   }, []);
   const pairing = async (action: 'pair' | 'approve' | 'reject', id?: string) => {
     setBusy(action); setError(''); setFeedback('');
@@ -59,14 +60,12 @@ export function PhoneSettings({ state }: { state: AppState }) {
     <div className="settings-buttons"><button className={`button ${known ? '' : 'primary'}`} disabled={disabled} onClick={() => void pairing('pair')}><Wifi size={15} />配对手机</button>
       {view.configured && <button className={`button ${known ? 'primary' : ''}`} disabled={disabled} onClick={() => void command('refresh')}><RefreshCw size={15} className={busy === 'refresh' ? 'spin' : ''} />{busy === 'refresh' ? '正在刷新…' : view.connected ? '刷新状态' : '重试连接'}</button>}</div>
     {feedback && <p className="phone-action-feedback" role="status">{feedback}</p>}
-    <p className="settings-description">手机和电脑连接同一 Wi-Fi。在这里点击“配对手机”，再用手机日历助手搜索电脑。首次核对验证码，之后自动重连。</p>
-    {wifi.pairingUntil > Date.now() / 1000 && <p className="settings-description">等待手机连接…配对窗口有效期为 2 分钟。</p>}
+    {wifi.pairingUntil > Date.now() / 1000 && <p className="settings-description">请在同一 Wi-Fi 下用手机搜索这台电脑。验证码两分钟内有效。</p>}
     {wifi.requests.map(request => <div className="phone-pair-request" key={request.id}><strong>{request.device}</strong><p>核对手机显示的验证码</p><div className="phone-pair-code">{request.code}</div><div className="settings-buttons"><button className="button primary" disabled={disabled} onClick={() => void pairing('approve', request.id)}>验证码一致，允许配对</button><button className="button" disabled={disabled} onClick={() => void pairing('reject', request.id)}>拒绝</button></div></div>)}
     {wifi.error && <p className="form-error" role="alert">{wifi.error}</p>}
-    <label className="phone-calendar-select">本地日程写入的手机日历<select aria-label="手机写入日历" disabled={disabled || !view.connected} value={view.calendarId ?? ''} onChange={event => { if (event.target.value) void command('calendar', event.target.value); }}><option value="">请选择可写日历</option>{view.calendars.map((calendar, i) => <option key={calendar.id} value={calendar.id} disabled={!calendar.writable}>{labels[i]}{counts.get(labels[i])! > 1 ? ` · #${calendar.id}` : ''}{calendar.writable ? '' : '（只读）'}</option>)}</select></label>
-    <p className="settings-description">手机日程按北京时间显示。打开本地日程可“发送到手机”；手机开启电脑编辑后才会执行。重复、全天及跨天日程在 WallNote 中只读，不支持删除手机日程。</p>
+    {view.configured&&<label className="phone-calendar-select">写入日历<select aria-label="手机写入日历" disabled={disabled || !view.connected} value={view.calendarId ?? ''} onChange={event => { if (event.target.value) void command('calendar', event.target.value); }}><option value="">请选择可写日历</option>{view.calendars.map((calendar, i) => <option key={calendar.id} value={calendar.id} disabled={!calendar.writable}>{labels[i]}{counts.get(labels[i])! > 1 ? ` · #${calendar.id}` : ''}{calendar.writable ? '' : '（只读）'}</option>)}</select></label>}
     {view.configured && <div className="phone-permission-status"><span>{view.canWrite ? '手机已允许电脑编辑' : '手机尚未允许电脑编辑'}</span><span>{view.pending} 项操作待确认</span></div>}
     {error && error !== view.error && <p className="form-error" role="alert">{error}</p>}
-    <details className="phone-advanced"><summary>高级：连接独立接收服务</summary><p className="settings-description">已有独立 CalendarBridge 服务时，可导入其电脑连接配置。</p><div className="settings-buttons"><button className="button" disabled={disabled} onClick={() => void command('connect')}><Upload size={15} />{view.configured ? '更换连接配置' : '连接接收服务'}</button>{view.configured && <button className="button" disabled={disabled} onClick={() => void command('disconnect')}><Unplug size={15} />断开</button>}</div></details>
+    <details className="phone-advanced"><summary>高级：连接独立接收服务</summary><div className="settings-buttons"><button className="button" disabled={disabled} onClick={() => void command('connect')}><Upload size={15} />{view.configured ? '更换连接配置' : '连接接收服务'}</button>{view.configured && <button className="button" disabled={disabled} onClick={() => void command('disconnect')}><Unplug size={15} />断开</button>}</div></details>
   </section>;
 }

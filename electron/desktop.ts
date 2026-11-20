@@ -9,7 +9,6 @@ import { layoutDisplays, startSnapGesture } from './snap-gesture';
 import { DesktopInputBridge, type MousePacket } from './input-bridge';
 import { activeDesktopNote } from '../shared/state';
 import { finishWidgetExit } from './window-motion';
-import type { DrawerHitArea } from '../shared/drawer';
 
 const execute = promisify(execFile);
 type Kind = 'wallpaper' | 'note' | 'notes-empty' | Exclude<ModuleId,'notes'>;
@@ -18,6 +17,8 @@ interface Inspection { exists: boolean; window: { handle: string; parent: string
 
 export class DesktopController {
   private entries = new Map<string, Entry>();
+  private byContents = new Map<WebContents,Entry>();
+  private byHandle = new Map<string,Entry>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private retry: ReturnType<typeof setInterval> | null = null;
   private displayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -27,8 +28,9 @@ export class DesktopController {
   private status: DesktopStatus = { enabled: false, active: false, displays: 0, widgets: 0, error: null };
   readonly executable = app.isPackaged ? path.join(process.resourcesPath, 'native', 'WallNote.DesktopHost.exe') : path.join(__dirname, '..', 'dist-native', 'WallNote.DesktopHost.exe');
   private input: DesktopInputBridge;
-  private drawerAreas: DrawerHitArea[] = [];
   private inputQueue: Promise<unknown> = Promise.resolve();
+  private menuTracking = false;
+  private pendingFocus = new Set<Promise<unknown>>();
   private lastFocus = { handle: '', at: 0 };
   private manipulations = new Map<string, ReturnType<typeof startSnapGesture>>();
 
@@ -42,7 +44,7 @@ export class DesktopController {
     const entry=this.entries.get('drawer');
     return entry?.attached && !entry.win.isDestroyed() && !entry.win.webContents.isCrashed() && !this.stopped ? entry.handle : null;
   }
-  identify(contents: WebContents): Entry | undefined { return [...this.entries.values()].find(entry => entry.win.webContents === contents); }
+  identify(contents: WebContents): Entry | undefined { return this.byContents.get(contents); }
   surfaceFor(contents: WebContents): DesktopSurface | null {
     const entry = this.identify(contents);
     return entry ? { bounds: entry.bounds, display: screen.getDisplayMatching(entry.bounds).bounds, topmost: entry.topmost } : null;
@@ -94,29 +96,36 @@ export class DesktopController {
     this.manipulations.delete(entry.handle);gesture.abort();
     for(const e of this.entries.values())if(!e.win.isDestroyed())e.win.webContents.send('layout:guides',{});
   }
-  async focusWidget(contents: WebContents) {
+  private async focusWidget(contents: WebContents) {
     const entry = this.identify(contents);
-    if (!entry || entry.kind === 'wallpaper' || entry.win.isDestroyed()) return;
+    if (this.menuTracking || !entry || entry.kind === 'wallpaper' || entry.win.isDestroyed()) return;
     if (!entry.topmost && (this.lastFocus.handle !== entry.handle || Date.now() - this.lastFocus.at > 180)) {
       this.lastFocus = { handle: entry.handle, at: Date.now() };
-      await this.native('focus', entry.handle, String(process.pid));
+      const focus = this.input.focus(entry.handle);
+      this.pendingFocus.add(focus);
+      try { await focus; } finally { this.pendingFocus.delete(focus); }
     }
-    if (!entry.win.isDestroyed()) entry.win.webContents.focus();
+    if (!this.menuTracking && !entry.win.isDestroyed()) entry.win.webContents.focus();
   }
   private minimum(kind: Kind) { return minimum(kind==='note'||kind==='notes-empty'||kind==='wallpaper'?'notes':kind); }
-  setDrawerAreas(contents: WebContents, areas: DrawerHitArea[]) {
-    if (this.identify(contents)?.kind !== 'drawer') return;
-    this.drawerAreas=areas; this.updateInputTargets();
+  async setMenuTracking(active: boolean) {
+    this.menuTracking = active;
+    // A renderer pointer-down may already have started a native focus request.
+    // Let it finish before handing the foreground to the Shell menu.
+    if (active) await Promise.allSettled(this.pendingFocus);
   }
+  setMenuProcess(pid:number) { this.input.setMenuProcess(pid); }
   private updateInputTargets() {
-    this.input.setTargets([...this.entries.values()].filter(entry => entry.kind !== 'wallpaper' && !entry.topmost && entry.attached && !entry.win.isDestroyed()).map(entry => ({ handle: entry.handle, pinned: false, scale: screen.getDisplayMatching(entry.bounds).scaleFactor, minWidth: this.minimum(entry.kind).width, minHeight: this.minimum(entry.kind).height, rightAreas: entry.kind==='drawer'?this.drawerAreas:undefined })));
+    // The bridge yields to *actual* Win32 popup tracking, not while Shell extensions load.
+    this.input.setTargets([...this.entries.values()].filter(e => e.kind !== 'wallpaper' && !e.topmost && e.attached && !e.win.isDestroyed()).map(e => ({ handle: e.handle, scale: screen.getDisplayMatching(e.bounds).scaleFactor })));
   }
   private async forwardMouse(packet: MousePacket) {
-    const entry = [...this.entries.values()].find(item => item.handle === packet.handle);
-    if (!entry || !entry.attached || entry.topmost || entry.win.isDestroyed()) return;
+    const entry = this.byHandle.get(packet.handle);
+    if (this.menuTracking || !entry || !entry.attached || entry.topmost || entry.win.isDestroyed()) return;
+    if(packet.type==='outside'){entry.win.webContents.send('desktop:outside-press');return;}
     if (packet.type === 'down' || packet.type === 'wheel') {
       await this.focusWidget(entry.win.webContents);
-      if (entry.win.isDestroyed()) return;
+      if (this.menuTracking || entry.win.isDestroyed()) return;
     }
     const x = Math.round(packet.x / entry.inputScale), y = Math.round(packet.y / entry.inputScale);
     const modifiers: Electron.MouseInputEvent['modifiers'] = packet.leftDown ? ['leftbuttondown'] : [];
@@ -184,15 +193,10 @@ export class DesktopController {
     try {
       const entries = [...this.entries.values()];
       if (!entries.length) { await this.sync(); return; }
-      let invalid = false;
-      for (const entry of entries) {
-        if (!entry.attached || entry.win.isDestroyed() || this.entries.get(entry.key) !== entry) continue;
-        const version = entry.layerVersion;
-        const inspection = await this.native<Inspection>('inspect', entry.handle);
-        if (this.entries.get(entry.key) !== entry || !entry.attached || entry.layerVersion !== version) continue;
-        if (!inspection.exists || !inspection.window || (!entry.topmost && inspection.window.parent === '0')) { invalid = true; break; }
-      }
-      await this.sync(invalid);
+      if(entries.some(e=>!e.attached))return; // A sync/attachment is already underway.
+      const snapshot=entries.map(e=>e.layerVersion);
+      const healthy=await this.input.check(entries.map(e=>({handle:e.handle,pinned:e.topmost})));
+      if(!healthy && !this.stopped && this.getState().settings.desktopEnabled!==false && entries.every((e,i)=>e.attached && e.layerVersion===snapshot[i] && this.entries.get(e.key)===e))await this.sync(true);
     } catch { await this.sync(true); }
     finally { this.checking = false; }
   }
@@ -209,6 +213,7 @@ export class DesktopController {
       }
       if (process.platform !== 'win32') { this.publish('桌面壁纸模式目前支持 Windows 10 / 11。'); return; }
       try {
+        await this.input.start();
         const wanted = new Set<string>(screen.getAllDisplays().map(d => `wallpaper:${d.id}`));
         const visible = shownModules(state.settings);
         const activeNote = activeDesktopNote(state);
@@ -255,7 +260,6 @@ export class DesktopController {
             }
           }
         }
-        await this.input.start();
         this.updateInputTargets();
         this.publish();
       } catch (error) {
@@ -289,13 +293,20 @@ export class DesktopController {
     const topmost = !wallpaper && !!this.getState().settings.topmostWidgets?.includes(kind === 'note' || kind === 'notes-empty' ? 'notes' : key);
     const entry: Entry = { key, kind, win, handle, attached: false, bounds, topmost, inputScale: screen.getDisplayMatching(bounds).scaleFactor, displayId: screen.getDisplayMatching(bounds).id, layerVersion: 0 };
     this.entries.set(key, entry);
+    const contents=win.webContents;
+    this.byContents.set(contents,entry);this.byHandle.set(handle,entry);
     if(kind==='drawer')win.webContents.on('render-process-gone',()=>this.onDrawerSurface?.(null));
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.setMenu(null);
     win.webContents.on('before-input-event', (event, input) => { if (input.control && ['+', '=', '-', '0'].includes(input.key)) event.preventDefault(); });
     win.webContents.on('will-navigate', event => event.preventDefault());
     win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    win.on('closed', () => { if (this.entries.get(key) === entry) { this.entries.delete(key); this.publish(); } });
+    win.on('closed', () => {
+      this.byContents.delete(contents);this.byHandle.delete(handle);
+      if(this.entries.get(key)!==entry)return; // Intentional destroy already removed the entry.
+      this.entries.delete(key);this.updateInputTargets();this.publish();
+      if(!this.stopped)void this.sync(); // Explorer may take a child HWND with it on restart.
+    });
     win.on('close', event => {
       if (this.stopped) return;
       event.preventDefault();
@@ -308,6 +319,7 @@ export class DesktopController {
     if (topmost) await this.native('topmost', handle, String(process.pid), String(screen.getDisplayMatching(bounds).scaleFactor));
     else await this.native('attach', handle, String(process.pid), wallpaper ? 'wallpaper' : 'widget', ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
     entry.attached = true;
+    if(!wallpaper)this.updateInputTargets();
     win.showInactive();
     // Showing a transparent Chromium window can reinterpret its initial bounds as parent-local.
     // Reapply screen-space coordinates after ShowWindow, especially on negative-origin displays.
@@ -355,14 +367,9 @@ export class DesktopController {
     this.updateInputTargets();
     entry.win.webContents.send('desktop:surface', this.surfaceFor(entry.win.webContents));
     if (position.width < 240 || position.height < 200 || position.width > 2000 || position.height > 2000) return null;
-    if (entry.kind === 'note') return { type: 'settings:update', changes: { notesPosition: position } };
-    if (entry.kind === 'tasks') return { type: 'settings:update', changes: { tasksPosition: position } };
-    if (entry.kind === 'calendar') return { type: 'settings:update', changes: { calendarPosition: position } };
-    if (entry.kind === 'schedule') return { type: 'settings:update', changes: { schedulePosition: position } };
-    if (entry.kind === 'notes-empty') return { type: 'settings:update', changes: { notesPosition: position } };
-    if (entry.kind === 'community') return { type: 'settings:update', changes: { communityPosition: position } };
-    if (entry.kind === 'drawer') return { type: 'settings:update', changes: { drawerPosition: position } };
-    return null;
+    if(entry.kind==='wallpaper')return null;
+    const id=entry.kind==='note'||entry.kind==='notes-empty'?'notes':entry.kind;
+    return { type:'settings:update', changes:{[`${id}Position`]:position} };
   }
 
   async positions(): Promise<Action[]> {
@@ -376,7 +383,7 @@ export class DesktopController {
     return actions.filter((action): action is Action => action !== null);
   }
   private destroy(entry: Entry) {
-    if(entry.kind==='drawer'){this.drawerAreas=[];this.onDrawerSurface?.(null);}
+    if(entry.kind==='drawer')this.onDrawerSurface?.(null);
     entry.attached = false; entry.layerVersion++;
     this.interrupt(entry);
     const timer = this.timers.get(entry.key);

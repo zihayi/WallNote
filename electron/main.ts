@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
-import { allWallpapers, builtInWallpapers, createNote, isValidState, reduceState } from '../shared/state';
+import { activeDesktopNote, allWallpapers, builtInWallpapers, createNote, isValidState, reduceState } from '../shared/state';
 import type { Action, AppState, DesktopCommand, Wallpaper } from '../shared/types';
 import { StateStore } from './store';
 import { DesktopController } from './desktop';
@@ -11,21 +11,22 @@ import { upgradeDesktopLayout } from '../shared/layout';
 import { PhoneSyncController } from './phone-sync';
 import { parsePhoneProfile } from './phone-client';
 import { WallpaperCache } from './wallpaper-cache';
-import { stateForView } from '../shared/renderer-state';
+import { stateForView, viewInputs } from '../shared/renderer-state';
 import { dateKey } from '../shared/calendar';
 import { WifiReceiver } from './wifi-receiver';
 import { ManagerMotion } from './window-motion';
 import { EventEditorWindow } from './event-editor';
 import { CommunityAssistant } from './community';
 import { itemId, itemURL } from '../shared/community';
-import { modules, validSlots } from '../shared/modules';
+import { moduleFlags, modulePositions, modules, validSlots } from '../shared/modules';
 import { assignedModules, dragModes, validFrames, validModuleList } from '../shared/snap-layout';
 import { layoutDisplays } from './snap-gesture';
 import { FileDrawer, type DrawerRoot } from './file-drawer';
 import { DrawerIconLease } from './drawer-icon-lease';
 import { DrawerArtworkLoader } from './drawer-artwork';
 import { DrawerMenu } from './drawer-menu';
-import { isDrawerPoint, validDrawerAreas } from '../shared/drawer';
+import { widgetAllows } from './widget-actions';
+import { isDrawerPoint } from '../shared/drawer';
 
 // Isolated user data is used by desktop smoke tests; normal sessions use Electron's userData.
 if (process.env.WALLNOTE_DATA_DIR) app.setPath('userData', process.env.WALLNOTE_DATA_DIR);
@@ -63,7 +64,7 @@ const desktop = new DesktopController(() => store.state, loadWindow, action => s
   await store.save(reduceState(store.state, action));
   if (!quitting) { await desktop.sync(); broadcast(); }
 }), status => {
-  for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.send('desktop:changed', status);
+  if(mainWindow && !mainWindow.isDestroyed())mainWindow.webContents.send('desktop:changed',status);
   updateTray();
 });
 const phoneSync = new PhoneSyncController(store.directory, () => store.state, transform => serial(async () => {
@@ -93,7 +94,7 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
 
 const isolatedDrawer = !!process.env.WALLNOTE_DATA_DIR;
 const drawerArtwork = new DrawerArtworkLoader(desktop.executable);
-const drawerMenu = new DrawerMenu(desktop.executable);
+const drawerMenu = new DrawerMenu(desktop.executable, active => desktop.setMenuTracking(active),pid=>desktop.setMenuProcess(pid));
 const drawerLease = new DrawerIconLease(desktop.executable, state => drawer.setIconState(state), isolatedDrawer);
 const drawer: FileDrawer = new FileDrawer({
   scan: () => desktop.native<DrawerRoot[]>('drawer-files', ...(isolatedDrawer ? ['user','public'].map(n=>path.join(store.directory,'drawer-fixture',n)) : [])),
@@ -104,7 +105,10 @@ const drawer: FileDrawer = new FileDrawer({
 }, view => {
   for(const win of BrowserWindow.getAllWindows()) if(!win.isDestroyed() && (win===mainWindow || desktop.identify(win.webContents)?.kind==='drawer')) win.webContents.send('drawer:changed',view);
 });
-desktop.onDrawerSurface = handle => drawer.surface(quitting ? null : handle, store.state.settings.hideIconsWithDrawer===true);
+desktop.onDrawerSurface = handle => {
+  if(!handle || quitting)drawerMenu.release();
+  drawer.surface(quitting ? null : handle, store.state.settings.hideIconsWithDrawer===true);
+};
 
 function wallpaperPath(wallpaper: Wallpaper): string {
   return builtInWallpapers.some(w => w.id === wallpaper.id)
@@ -166,9 +170,14 @@ function showManager() {
   managerMotion?.show();
 }
 
+let trayKey='';
 function updateTray() {
   if (!tray || tray.isDestroyed()) return;
   const status = desktop.getStatus();
+  const settings=store.state.settings,assigned=assignedModules(settings);
+  const key=JSON.stringify([status.enabled,status.active,settings.hideIconsWithDrawer,assigned.map(id=>[id,settings[modules[id].flag]!==false])]);
+  if(key===trayKey)return;
+  trayKey=key;
   tray.setToolTip(status.active ? 'WallNote · 桌面壁纸正在运行' : 'WallNote · 桌面管理');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开 WallNote 管理面板', click: showManager },
@@ -177,7 +186,7 @@ function updateTray() {
       await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true, showDesktopNotes: true } }, { type: 'note:add', note }));
       await desktop.sync(); broadcast();
     }).catch(reportBackgroundError); } },
-    ...assignedModules(store.state.settings).map(id => {
+    ...assigned.map(id => {
       const { flag, name } = modules[id];
       return { label: `显示${name}`, type: 'checkbox' as const, checked: store.state.settings[flag] !== false, click: (item: Electron.MenuItem) => { void serial(async () => { await store.save(reduceState(store.state, { type: 'settings:update', changes: { [flag]: item.checked } })); await desktop.sync(); broadcast(); }).catch(reportBackgroundError); } };
     }),
@@ -202,7 +211,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, tasksPosition: undefined, schedulePosition: undefined, calendarPosition: undefined, notesPosition: undefined, communityPosition: undefined, drawerPosition: undefined } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, ...Object.fromEntries(modulePositions.map(k=>[k,undefined])) } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -214,8 +223,18 @@ function reportBackgroundError(error: unknown): void {
   dialog.showErrorBox('WallNote 保存失败', error instanceof Error ? error.message : '无法保存数据，请检查磁盘空间和目录权限。');
 }
 
-function broadcast(): void {
-  for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed() && (win !== mainWindow || win.isVisible())) win.webContents.send('state:changed', rendererState(win.webContents));
+const lastInputs=new WeakMap<WebContents,unknown[]>();
+function broadcast(forceDay=false): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if(win.isDestroyed() || (win===mainWindow && !win.isVisible()))continue;
+    const contents=win.webContents,view=desktop.identify(contents)?.kind;
+    if(view){
+      const next=viewInputs(store.state,view),previous=lastInputs.get(contents);
+      if(!(forceDay && (view==='schedule'||view==='calendar')) && previous && next.every((v,i)=>v===previous[i]))continue;
+      lastInputs.set(contents,next);
+    }
+    contents.send('state:changed',rendererState(contents));
+  }
   updateTray();
 }
 
@@ -244,7 +263,7 @@ function validateAction(value: unknown): asserts value is Action {
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', 'showDesktopTasks', 'showDesktopCalendar', 'showDesktopSchedule', 'showDesktopNotes', 'showDesktopCommunity', 'showDesktopDrawer', 'moduleSlots', 'glassEnabled', 'tasksPosition', 'calendarPosition', 'schedulePosition', 'notesPosition'];
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', ...moduleFlags, 'moduleSlots', 'glassEnabled', ...modulePositions];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -258,16 +277,21 @@ function installIPC(): void {
   ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh(true);});
   ipcMain.handle('drawer:icon',(e,id)=>{fromDrawer(e);return drawer.icon(id);});
   ipcMain.handle('drawer:open',(e,id,reveal)=>{fromDrawer(e);return drawer.open(id,reveal===true);});
-  ipcMain.handle('drawer:menu',async(e,id,anchor,extended)=>{
+  const validTicket=(v:unknown)=>typeof v==='string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
+  ipcMain.handle('drawer:menu-prepare',(e,id,ticket)=>{
+    fromDrawer(e);const win=BrowserWindow.fromWebContents(e.sender);
+    if(win && !quitting && desktop.drawerHandle() && validTicket(ticket))return drawerMenu.prepare(win,ticket,()=>drawer.menuItem(id));
+  });
+  ipcMain.handle('drawer:menu-discard',(e,ticket)=>{
+    fromDrawer(e);const win=BrowserWindow.fromWebContents(e.sender);if(win && validTicket(ticket))drawerMenu.discard(win,ticket);
+  });
+  ipcMain.handle('drawer:menu',async(e,id,anchor,extended,ticket)=>{
     fromDrawer(e);
-    if(quitting || !isDrawerPoint(anchor) || typeof extended!=='boolean')throw new Error('无效的菜单位置。');
+    if(quitting || !isDrawerPoint(anchor) || typeof extended!=='boolean' || (ticket!==undefined&&!validTicket(ticket)))throw new Error('无效的菜单位置。');
     const win=BrowserWindow.fromWebContents(e.sender);
     if(!win || win.isDestroyed())throw new Error('抽屉窗口已关闭。');
-    const file=await drawer.currentFile(id);
-    await drawerMenu.show(win,desktop.surfaceFor(e.sender),file,anchor,extended);
-  });
-  ipcMain.on('drawer:hit-areas',(e,areas)=>{
-    if(e.senderFrame===e.sender.mainFrame && desktop.identify(e.sender)?.kind==='drawer' && validDrawerAreas(areas))desktop.setDrawerAreas(e.sender,areas);
+    const item=await drawer.menuItem(id);
+    await drawerMenu.show(win,desktop.surfaceFor(e.sender),item,anchor,extended,ticket);
   });
   ipcMain.handle('drawer:icons',(e,hide)=>{
     fromDrawer(e);if(typeof hide!=='boolean')throw new Error('设置无效。');
@@ -313,27 +337,15 @@ function installIPC(): void {
     if (quitting) throw new Error('正在退出，请稍后重新打开。');
     const widget = desktop.identify(event.sender);
     if (input.type === 'layout:apply') trusted(event, true);
-    if (widget?.kind === 'wallpaper') throw new Error('壁纸层为只读显示。');
-    if (input.type === 'widget:topmost') {
-      if (widget && input.key !== (widget.kind === 'note' || widget.kind === 'notes-empty' ? 'notes' : widget.key)) throw new Error('只能切换当前组件的层级。');
-    } else {
-    if (widget?.kind === 'note' && input.type !== 'note:selectDesktop' && (input.type !== 'note:update' || input.id !== widget.key.slice(5))) throw new Error('便签窗口只能修改当前便签');
-    if (widget?.kind === 'tasks' && !input.type.startsWith('task:') && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopTasks'))) throw new Error('待办组件只能修改待办事项。');
-    if (widget?.kind === 'calendar' || widget?.kind === 'schedule') {
-      const flag = widget.kind === 'calendar' ? 'showDesktopCalendar' : 'showDesktopSchedule';
-      if (!input.type.startsWith('event:') && input.type !== 'calendar:select' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === flag))) throw new Error('日历组件只能修改日程。');
-    }
-    if (widget?.kind === 'notes-empty' && input.type !== 'note:add' && !(input.type === 'settings:update' && Object.keys(input.changes).every(key => key === 'showDesktopNotes'))) throw new Error('便签组件只能新建便签。');
-    if (widget?.kind === 'community' && !(input.type === 'settings:update' && Object.keys(input.changes).length === 1 && input.changes.showDesktopCommunity === false)) throw new Error('日报组件只能收起当前模块。');
-    if (widget?.kind === 'drawer' && !(input.type === 'settings:update' && Object.keys(input.changes).length === 1 && input.changes.showDesktopDrawer === false)) throw new Error('文件抽屉只能收起当前模块。');
-    }
+    if(widget && !widgetAllows(widget.kind,widget.key,input))throw new Error('此操作不属于当前桌面模块。');
     if (input.type === 'event:update' && phoneSync.isPhoneEvent(input.id)) return phoneSync.updatePhone(input.id, input.changes, input.expectedRevision).then(() => rendererState(event.sender));
     if (input.type === 'event:delete' && (phoneSync.isPhoneEvent(input.id) || phoneSync.isLinked(input.id))) throw new Error('此日程来自手机或已关联手机，当前版本不支持删除手机日程。');
     return serial(async () => {
-      let next = reduceState(store.state, input);
+      const before=store.state;
+      let next = reduceState(before, input);
       if ((input.type === 'note:add' && input.note.pinned) || (input.type === 'note:update' && input.changes.pinned === true)) next = { ...next, settings: { ...next.settings, showDesktopNotes: true } };
-      if (!isValidState(next)) throw new Error('内容超出限制或数据无效，未保存更改。');
       if (input.type === 'settings:update' && input.changes.launchAtLogin !== undefined) {
+        if(!isValidState(next))throw new Error('无效的设置。');
         if (!supportsLaunchAtLogin) throw new Error('请在 Windows 安装版中设置登录时启动。');
         app.setLoginItemSettings({ openAtLogin: input.changes.launchAtLogin, name: 'WallNote', path: process.execPath });
       }
@@ -346,7 +358,8 @@ function installIPC(): void {
         await fs.unlink(path.join(imageDir, `${input.id}.jpg`)).catch(() => undefined);
         await wallpaperCache.remove(input.id);
       }
-      await desktop.sync(false, rearrange); broadcast();
+      if(next.settings!==before.settings || (next.notes!==before.notes && activeDesktopNote(next)?.id!==activeDesktopNote(before)?.id))await desktop.sync(false,rearrange);
+      broadcast();
       return rendererState(event.sender);
     });
   });
@@ -427,10 +440,6 @@ function installIPC(): void {
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
   ipcMain.handle('layout:displays', event => { trusted(event,true); return layoutDisplays(); });
-  ipcMain.on('desktop:focus', event => {
-    const entry = desktop.identify(event.sender);
-    if (entry && entry.kind !== 'wallpaper' && event.senderFrame === event.sender.mainFrame) void desktop.focusWidget(event.sender).catch(() => undefined);
-  });
   ipcMain.on('desktop:manipulate', (event, mode, anchor, bypass) => {
     const entry = desktop.identify(event.sender);
     if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || !dragModes.includes(mode) || !Number.isFinite(anchor?.x) || !Number.isFinite(anchor?.y) || typeof bypass!=='boolean' || quitting) return;
@@ -495,7 +504,10 @@ if (hasLock) {
       const url = new URL(request.url);
       const wallpaper = allWallpapers(store.state).find(w => w.id === url.pathname.slice(1));
       if (!['image', 'blur'].includes(url.hostname) || !wallpaper || request.method !== 'GET') return new Response('Not found', { status: 404 });
-      try { return net.fetch(pathToFileURL(url.hostname === 'blur' ? await wallpaperCache.blur(wallpaper) : wallpaperPath(wallpaper)).toString()); }
+      try {
+        const file=url.hostname!=='blur'?wallpaperPath(wallpaper):wallpaper.category==='imported'?await wallpaperCache.blur(wallpaper):path.join(assetDir,'wallpapers',`${wallpaper.id}-blur.jpg`);
+        return await net.fetch(pathToFileURL(file).toString());
+      }
       catch { return new Response('Image unavailable', { status: 404 }); }
     });
     await phoneSync.start();
@@ -504,7 +516,7 @@ if (hasLock) {
     installIPC();
     if (!process.env.WALLNOTE_DATA_DIR || process.env.WALLNOTE_ENABLE_WIFI_RECEIVER === '1') void wifiReceiver.autoStart(phoneSync.getStatus().configured);
     let renderedDay = dateKey();
-    rendererDayTimer = setInterval(() => { const day = dateKey(); if (day !== renderedDay) { renderedDay = day; broadcast(); } }, 30000);
+    rendererDayTimer = setInterval(() => { const day = dateKey(); if (day !== renderedDay) { renderedDay = day; broadcast(true); } }, 30000);
     rendererDayTimer.unref();
     const showOnStart = process.argv.includes('--manage') || process.env.WALLNOTE_SHOW_MANAGER === '1';
     if (showOnStart || process.env.WALLNOTE_CREATE_MANAGER === '1') createMainWindow(showOnStart);
@@ -522,6 +534,7 @@ if (hasLock) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    drawerMenu.stop();
     globalShortcut.unregisterAll();
     if (managerIdleTimer) clearTimeout(managerIdleTimer);
     if (rendererDayTimer) clearInterval(rendererDayTimer);

@@ -3,14 +3,18 @@ import type { AppState } from './types';
 export const slots = ['left', 'center', 'upper', 'lower'] as const;
 export type Slot = typeof slots[number];
 export const modules = {
-  schedule: { name: '时间安排', flag: 'showDesktopSchedule', tall: true },
-  calendar: { name: '日历', flag: 'showDesktopCalendar', tall: true },
+  schedule: { name: '时间安排', flag: 'showDesktopSchedule', tall: true, minimum: {width:280,height:360} },
+  calendar: { name: '日历', flag: 'showDesktopCalendar', tall: true, minimum: {width:330,height:550} },
   tasks: { name: '待办', flag: 'showDesktopTasks', tall: false },
   notes: { name: '便签', flag: 'showDesktopNotes', tall: false },
   community: { name: '社区日报', flag: 'showDesktopCommunity', tall: false },
   drawer: { name: '文件抽屉', flag: 'showDesktopDrawer', tall: false },
 } as const;
 export type ModuleId = keyof typeof modules;
+export type ModuleFlag = typeof modules[ModuleId]['flag'];
+export const moduleIds = Object.keys(modules) as ModuleId[];
+export const moduleFlags = moduleIds.map(id=>modules[id].flag);
+export const modulePositions = moduleIds.map(id=>`${id}Position` as const);
 export type ModuleSlots = Record<Slot, ModuleId | null>;
 export const slotNames: Record<Slot, string> = { left: '左栏', center: '中栏', upper: '右上', lower: '右下' };
 export const defaultSlots = { left: 'schedule', center: 'calendar', upper: 'tasks', lower: 'notes' } as const;

@@ -24,12 +24,17 @@ try {
   await tabs.getByRole('button',{name:/其他/}).evaluate(b=>b.click());await expect(panel.getByRole('button',{name:'选择Picture.png'})).toBeVisible();
   expect(await panel.evaluate(async()=>{try{await window.wallnote.openDrawerItem('arbitrary/path');return false;}catch{return true;}})).toBe(true);
   // Stub the OS action on this test-owned process: nothing is actually launched.
-  await app.evaluate(({shell})=>{globalThis.__openedDrawer=[];shell.openPath=async p=>{globalThis.__openedDrawer.push(p);return '';};});
+  await app.evaluate(({shell})=>{globalThis.__openedDrawer=[];globalThis.__revealedDrawer=[];shell.openPath=async p=>{globalThis.__openedDrawer.push(p);return '';};shell.showItemInFolder=p=>{globalThis.__revealedDrawer.push(p);};});
   const tile=panel.getByRole('button',{name:'选择Picture.png',exact:true});
   await tile.click();await expect(tile).toHaveAttribute('aria-pressed','true');expect(await app.evaluate(()=>globalThis.__openedDrawer)).toEqual([]);
   await tile.dblclick();await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer)).toEqual([path.join(user,'Picture.png')]);
   await tile.focus();await panel.keyboard.press('Enter');await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer.length)).toBe(2);
   await panel.keyboard.press('Escape');await expect(tile).toHaveAttribute('aria-pressed','false');
+  await tile.click({button:'right'});const quick=panel.getByRole('menu',{name:'文件操作'});
+  await quick.getByRole('menuitem',{name:'打开所在位置'}).click();await expect(quick).toHaveCount(0);
+  expect(await app.evaluate(()=>globalThis.__revealedDrawer)).toEqual([path.join(user,'Picture.png')]);
+  await tile.press('Shift+F10');await quick.getByRole('menuitem',{name:'打开',exact:true}).press('Enter');
+  await expect.poll(()=>app.evaluate(()=>globalThis.__openedDrawer.length)).toBe(3);
   expect(await panel.evaluate(async()=>{try{await window.wallnote.showDrawerMenu('arbitrary/path',{x:.5,y:.5},false);return false;}catch{return true;}})).toBe(true);
   await panel.getByRole('button',{name:'收起文件抽屉'}).evaluate(b=>b.click());await expect.poll(()=>manager.evaluate(()=>window.wallnote.getDrawer().then(v=>v.enabled))).toBe(false);
   expect((await manager.evaluate(()=>window.wallnote.getDrawer())).items).toHaveLength(0);

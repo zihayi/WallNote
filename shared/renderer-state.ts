@@ -1,7 +1,20 @@
 import type { AppState, ScheduleEvent } from './types';
 import { selectedDate } from './calendar';
+import type { ModuleId } from './modules';
 
-export type RendererView = 'main' | 'wallpaper' | 'calendar' | 'schedule' | 'tasks' | 'note' | 'notes-empty' | 'community' | 'drawer';
+export type RendererView = 'main' | 'wallpaper' | Exclude<ModuleId,'notes'> | 'note' | 'notes-empty';
+
+// The store replaces changed collections. Compare references before projecting or
+// crossing IPC: typing in a note should never wake every wallpaper and calendar.
+export function viewInputs(s:AppState, view:RendererView):unknown[] {
+  if(view==='main')return [s];
+  const inputs:unknown[]=[s.selectedWallpaperId,s.appliedWallpaperId,s.wallpapers];
+  if(view!=='wallpaper')inputs.push(s.settings);
+  if(view==='note')inputs.push(s.notes);
+  if(view==='tasks')inputs.push(s.tasks);
+  if(view==='calendar'||view==='schedule')inputs.push(s.events,s.phoneEvents,s.phoneSync,selectedDate(s));
+  return inputs;
+}
 
 // A wallpaper or task window must not retain every note body and phone calendar snapshot.
 // Calendar dots only need lightweight records outside the selected day.

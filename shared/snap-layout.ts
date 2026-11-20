@@ -1,6 +1,6 @@
 import type { AppState, DesktopSurface } from './types';
 import { plannerLayout } from './layout';
-import { defaultSlots, modules, slots, type ModuleId } from './modules';
+import { defaultSlots, moduleIds, modules, slots, type ModuleId } from './modules';
 
 export type Rect = DesktopSurface['bounds'];
 export interface LayoutDisplay { id: number; workArea: Rect; primary: boolean }
@@ -10,9 +10,10 @@ export type DockFrames = Partial<Record<ModuleId, DockFrame>>;
 export type DragMode = 'move' | 'resize' | 'n' | 's' | 'w' | 'e' | 'nw' | 'ne' | 'sw'; // resize = SE
 export const dragModes: DragMode[] = ['move','resize','n','s','w','e','nw','ne','sw'];
 export interface Guides { x?: number; y?: number; displayId?: number }
-export const moduleIds = Object.keys(modules) as ModuleId[];
+export { moduleIds };
 export const isModule = (id: unknown): id is ModuleId => typeof id === 'string' && Object.hasOwn(modules, id);
-export const minimum = (id: ModuleId) => id === 'calendar' ? {width:330,height:550} : id === 'schedule' ? {width:280,height:360} : {width:260,height:260};
+const squareMinimum={width:260,height:260};
+export const minimum = (id:ModuleId) => { const m=modules[id];return 'minimum' in m?m.minimum:squareMinimum; };
 type Settings = AppState['settings'];
 export const assignedModules = (s: Settings): ModuleId[] => s.canvasModules ?? slots.map(slot => (s.moduleSlots ?? defaultSlots)[slot]).filter((id): id is ModuleId => id !== null);
 export const shownModules = (s: Settings) => assignedModules(s).filter(id => s[modules[id].flag] !== false);

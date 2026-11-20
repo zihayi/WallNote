@@ -2,6 +2,7 @@ import { createInitialState, isValidState, reduceState } from '../shared/state';
 import type { AppState, WallNoteAPI, Wallpaper } from '../shared/types';
 import { emptyCommunity } from '../shared/community';
 import { emptyDrawer } from '../shared/drawer';
+import { wallpaperURL } from '../shared/wallpapers';
 
 const storageKey = 'wallnote.preview.v1';
 const updates = new EventTarget();
@@ -29,7 +30,7 @@ const previewAPI: WallNoteAPI = {
   getDrawer: async()=>emptyDrawer(),refreshDrawer:async()=>emptyDrawer(),drawerIcon:async()=>'',
   openDrawerItem:async()=>{throw new Error('请在 Windows 桌面版中打开项目。');},
   showDrawerMenu:async()=>{throw new Error('请在 Windows 桌面版使用文件菜单。');},
-  drawerHitAreas:()=>undefined,
+  prepareDrawerMenu:async()=>{},discardDrawerMenu:async()=>{},
   setDrawerIcons:async()=>{throw new Error('请在 Windows 桌面版中设置桌面图标。');},
   onDrawer:()=>()=>undefined,
   getCommunity: async () => emptyCommunity(),
@@ -56,7 +57,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.9.2', platform: 'browser', dataPath: '当前浏览器的本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.10.1', platform: 'browser', dataPath: '浏览器本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -82,7 +83,6 @@ const previewAPI: WallNoteAPI = {
   onDesktopStatus: () => () => undefined,
   getDesktopSurface: async () => null,
   onDesktopSurface: () => () => undefined,
-  focusDesktopWidget: () => undefined,
   manipulateDesktopWidget: () => undefined,
   getLayoutDisplays: async () => [{ id: 0, primary: true, workArea: { x:0,y:0,width:window.screen.availWidth||1440,height:window.screen.availHeight||900 } }],
   onLayoutGuides: () => () => undefined,
@@ -93,9 +93,7 @@ const previewAPI: WallNoteAPI = {
 
 export const api = window.wallnote ?? previewAPI;
 export const isDesktop = !!window.wallnote;
-export function wallpaperURL(wallpaper: Wallpaper): string {
-  return wallpaper.category === 'imported' ? `wallnote://image/${wallpaper.id}` : `./wallpapers/${wallpaper.file}`;
-}
+export { wallpaperURL };
 export function blurredWallpaperURL(wallpaper: Wallpaper): string { return isDesktop ? `wallnote://blur/${wallpaper.id}` : wallpaperURL(wallpaper); }
 
 export function errorMessage(error: unknown): string {
