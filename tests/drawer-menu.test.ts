@@ -48,6 +48,14 @@ it('closing the quick menu during file validation never starts a worker',async()
   const p=menu.prepare(win,'old',()=>new Promise(r=>{complete=r;}));menu.discard(win,'old');complete(item);await p;expect(helpers).toHaveLength(0);
 });
 
+it('a new press can cancel a pending popup, but a late discard cannot cancel a tracking menu',async()=>{
+  const {helpers,menu,win,item,open}=fixture();const first=open(item,false,'a');await Promise.resolve();
+  menu.discard(win,'a');expect(helpers[0].stdin.writableEnded).toBe(true);
+  const second=open(item,false,'b');await Promise.resolve();helpers[1].reply('tracking',2);
+  menu.discard(win,'b');expect(helpers[1].stdin.writableEnded).toBe(false);
+  helpers[0].reply('done',1);await first;helpers[1].reply('done',2);await second;menu.stop();
+});
+
 it('allows a new popup during an earlier property sheet; late completion cannot unlock it',async()=>{
   const {helpers,tracking,open,menu}=fixture();const first=open();await Promise.resolve();helpers[0].reply('closed',1);
   expect(tracking).toHaveBeenLastCalledWith(false);

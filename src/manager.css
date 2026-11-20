@@ -31,6 +31,7 @@
 .app-shell .settings-layout .settings-card { margin:0; min-width:0; }
 .app-shell .settings-layout .data-settings { grid-column:1 / -1; }
 .app-shell .setting-row { padding-block:12px; }
+.app-shell .setting-row select {padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font-size:13px;}
 .app-shell .note-card,.app-shell .settings-card,.app-shell .tasks-panel { box-shadow:none; }
 .app-shell .tasks-panel-footer { justify-content:flex-end; }
 .app-shell .module-layout { display:flex; align-items:center; justify-content:space-between; gap:12px; }

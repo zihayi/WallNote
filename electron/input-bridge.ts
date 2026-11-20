@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface MousePacket {
-  handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave' | 'outside';
+  handle: string; type: 'move' | 'down' | 'up' | 'wheel' | 'leave' | 'outside' | 'native-down';
   x: number; y: number; delta: number; clickCount: number; leftDown: boolean; rightDown?: boolean; button?: 'left'|'right'; alt?: boolean; shift?: boolean;
 }
 interface InputTarget { handle: string; scale: number }
@@ -49,7 +49,7 @@ export class DesktopInputBridge {
             if (this.child!==child) continue;
             if (packet.ready) { ready = true; clearTimeout(timeout); resolve(); }
             else if (typeof packet.reply==='number') this.replies.get(packet.reply)?.(packet.ok===true);
-            else if (typeof packet.handle === 'string' && ['move', 'down', 'up', 'wheel', 'leave','outside'].includes(packet.type)) this.onMouse(packet as MousePacket);
+            else if (typeof packet.handle === 'string' && ['move', 'down', 'up', 'wheel', 'leave','outside','native-down'].includes(packet.type)) this.onMouse(packet as MousePacket);
           } catch { /* Ignore non-protocol lines from the bridge. */ }
         }
       });

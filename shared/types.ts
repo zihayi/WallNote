@@ -86,7 +86,7 @@ export interface AppState {
   appliedWallpaperId: string | null;
   settings: {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
-    moduleSlots?: ModuleSlots; hideIconsWithDrawer?: boolean;
+    moduleSlots?: ModuleSlots; hideIconsWithDrawer?: boolean; drawerMenuMode?: 'windows'|'quick';
     canvasModules?: ModuleId[]; dockFrames?: DockFrames; layoutSnap?: boolean;
     glassEnabled?: boolean;
     topmostWidgets?: string[];

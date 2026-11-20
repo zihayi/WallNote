@@ -54,6 +54,7 @@ internal static class DrawerContextMenu {
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool EndMenu();
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
     [DllImport("user32.dll")] private static extern IntPtr GetClipboardOwner();
     [DllImport("user32.dll")] private static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
@@ -110,6 +111,15 @@ internal static class DrawerContextMenu {
             base.WndProc(ref m);
         }
     }
+    // Staging a menu must not create a foreground-capable top-level form. This HWND
+    // only wakes the STA; HWND_MESSAGE is outside the screen's input and Z order.
+    private sealed class CommandWindow : NativeWindow, IDisposable {
+        internal Action wake;
+        internal const uint Wake=0x8001;
+        internal CommandWindow(){CreateHandle(new CreateParams {Parent=new IntPtr(-3),Caption="WallNote menu queue"});}
+        protected override void WndProc(ref Message m){if(m.Msg==Wake){if(wake!=null)wake();return;}base.WndProc(ref m);}
+        public void Dispose(){DestroyHandle();}
+    }
     private static volatile bool stopping,building;
     private static int wanted;
     private static readonly bool measure=Environment.GetEnvironmentVariable("WALLNOTE_MENU_TRACE")=="1";
@@ -160,16 +170,18 @@ internal static class DrawerContextMenu {
     private static void Drop() {var m=pending;pending=null;if(m!=null)m.Dispose();}
     private static string FileFrom(string field){var file=Encoding.UTF8.GetString(Convert.FromBase64String(field));if(!Path.IsPathRooted(file))throw new ArgumentException();return file;}
 
-    private static void Show(MenuOwner host,Process owner,string[] args,int id) {
+    private static void Show(Func<MenuOwner> getHost,Process owner,string[] args,int id) {
         var widget=new IntPtr(long.Parse(args[2]));int x=int.Parse(args[3]),y=int.Parse(args[4]),prepared=int.Parse(args[6]);
         bool extended=args[5]=="1";string file=FileFrom(args[7]);
         if(!Available(widget,owner))throw new OperationCanceledException();
         FileMenu m=null;
         if(!extended && pending!=null && pending.Matches(prepared,widget,file)){m=pending;pending=null;}else Drop();
         if(m==null)m=FileMenu.Build(0,file,widget,extended);
+        MenuOwner host=null;
         using(m)try {
             if(!Available(widget,owner))throw new OperationCanceledException();
             var clock=measure?Stopwatch.StartNew():null;
+            host=getHost();
             host.menu3=m.context as IContextMenu3;host.menu2=m.context as IContextMenu2;
             host.Bounds=new Rectangle(x,y,1,1);host.Show();
             if(!host.TakeForeground(widget,(uint)owner.Id))throw new InvalidOperationException();
@@ -191,11 +203,11 @@ internal static class DrawerContextMenu {
                 if(clipOwner==GetCurrentProcessId())OleFlushClipboard();
             }
         } finally {
-            host.Hide();host.menu2=null;host.menu3=null;
+            if(host!=null){host.Hide();host.menu2=null;host.menu3=null;}
         }
     }
 
-    private static void Drain(ConcurrentQueue<string[]> commands,MenuOwner host,Process owner){
+    private static void Drain(ConcurrentQueue<string[]> commands,Func<MenuOwner> getHost,Process owner){
         if(busy)return; // Some Shell handlers pump messages reentrantly during Query/Invoke.
         busy=true;
         try {
@@ -203,7 +215,7 @@ internal static class DrawerContextMenu {
             while(!stopping && commands.TryDequeue(out a)){
                 int id=int.Parse(a[1]);
                 if(a[0]=="show"){
-                    try {Show(host,owner,a,id);Reply("done",id);}catch{Drop();Reply("failed",id);}
+                    try {Show(getHost,owner,a,id);Reply("done",id);}catch{Drop();Reply("failed",id);}
                 }else if(a[0]=="prepare" && Volatile.Read(ref wanted)==id){
                     Drop();var hwnd=new IntPtr(long.Parse(a[2]));
                     try {if(Available(hwnd,owner))pending=FileMenu.Build(id,FileFrom(a[3]),hwnd,false);}catch{/* Re-query on actual Show. */}
@@ -216,10 +228,11 @@ internal static class DrawerContextMenu {
     public static int Run(uint pid) {
         Marshal.ThrowExceptionForHR(OleInitialize(IntPtr.Zero));
         try {
-            using(var owner=Process.GetProcessById((int)pid))using(var host=new MenuOwner()) {
-                host.ShowInTaskbar=false;host.FormBorderStyle=FormBorderStyle.None;host.StartPosition=FormStartPosition.Manual;
-                host.Opacity=0;host.TopMost=true;var hwnd=host.Handle; // Hidden warm owner; never activate it until Show.
+            using(var owner=Process.GetProcessById((int)pid))using(var pump=new CommandWindow()) {
+                MenuOwner host=null;var hwnd=pump.Handle;
+                Func<MenuOwner> getHost=delegate {return host??(host=new MenuOwner{ShowInTaskbar=false,FormBorderStyle=FormBorderStyle.None,StartPosition=FormStartPosition.Manual,Opacity=0,TopMost=true});};
                 var commands=new ConcurrentQueue<string[]>();var sta=Thread.CurrentThread;
+                pump.wake=delegate{if(stopping){if(tracking)EndMenu();if(!busy)Application.ExitThread();}else Drain(commands,getHost,owner);};
                 var reader=new Thread(delegate(){
                     try {
                         string line;
@@ -231,18 +244,18 @@ internal static class DrawerContextMenu {
                             else if(fields[0]=="drop" && fields.Length==2)Interlocked.CompareExchange(ref wanted,0,id);
                             else if(fields[0]=="show" && fields.Length==8)Interlocked.Exchange(ref wanted,int.Parse(fields[6]));
                             else break;
-                            commands.Enqueue(fields);host.BeginInvoke((Action)delegate{Drain(commands,host,owner);});
+                            commands.Enqueue(fields);PostMessage(hwnd,CommandWindow.Wake,IntPtr.Zero,IntPtr.Zero);
                         }
                     } catch(InvalidOperationException){} catch(IOException){} catch(FormatException){}
                     finally {
                         stopping=true;
-                        try {host.BeginInvoke((Action)delegate {if(tracking)EndMenu();if(!busy)Application.ExitThread();});}catch(InvalidOperationException){}
+                        PostMessage(hwnd,CommandWindow.Wake,IntPtr.Zero,IntPtr.Zero);
                         // An abandoned query can be stuck inside a third-party extension; only
                         // terminate a still-building worker, never one executing a Shell verb.
                         if(building && !sta.Join(2500) && building)Process.GetCurrentProcess().Kill();
                     }
                 }){IsBackground=true};reader.Start();
-                try{Application.Run();}finally{Drop();} // EOF (including parent death) releases the hidden owner.
+                try{Application.Run();}finally{Drop();if(host!=null)host.Dispose();} // EOF also handles parent death.
             }
         } finally {OleUninitialize();}
         return 0;

@@ -263,7 +263,7 @@ function validateAction(value: unknown): asserts value is Action {
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', ...moduleFlags, 'moduleSlots', 'glassEnabled', ...modulePositions];
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', ...moduleFlags, 'moduleSlots', 'glassEnabled', 'drawerMenuMode', ...modulePositions];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -278,20 +278,27 @@ function installIPC(): void {
   ipcMain.handle('drawer:icon',(e,id)=>{fromDrawer(e);return drawer.icon(id);});
   ipcMain.handle('drawer:open',(e,id,reveal)=>{fromDrawer(e);return drawer.open(id,reveal===true);});
   const validTicket=(v:unknown)=>typeof v==='string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
+  const menuRequests=new WeakMap<WebContents,string|symbol>();
   ipcMain.handle('drawer:menu-prepare',(e,id,ticket)=>{
     fromDrawer(e);const win=BrowserWindow.fromWebContents(e.sender);
     if(win && !quitting && desktop.drawerHandle() && validTicket(ticket))return drawerMenu.prepare(win,ticket,()=>drawer.menuItem(id));
   });
   ipcMain.handle('drawer:menu-discard',(e,ticket)=>{
-    fromDrawer(e);const win=BrowserWindow.fromWebContents(e.sender);if(win && validTicket(ticket))drawerMenu.discard(win,ticket);
+    fromDrawer(e);const win=BrowserWindow.fromWebContents(e.sender);if(win && validTicket(ticket)){
+      if(menuRequests.get(e.sender)===ticket)menuRequests.delete(e.sender);
+      drawerMenu.discard(win,ticket);
+    }
   });
   ipcMain.handle('drawer:menu',async(e,id,anchor,extended,ticket)=>{
     fromDrawer(e);
     if(quitting || !isDrawerPoint(anchor) || typeof extended!=='boolean' || (ticket!==undefined&&!validTicket(ticket)))throw new Error('无效的菜单位置。');
     const win=BrowserWindow.fromWebContents(e.sender);
     if(!win || win.isDestroyed())throw new Error('抽屉窗口已关闭。');
-    const item=await drawer.menuItem(id);
-    await drawerMenu.show(win,desktop.surfaceFor(e.sender),item,anchor,extended,ticket);
+    const request=ticket??Symbol();menuRequests.set(e.sender,request);
+    try {
+      const item=await drawer.menuItem(id);
+      if(!quitting && !win.isDestroyed() && menuRequests.get(e.sender)===request)await drawerMenu.show(win,desktop.surfaceFor(e.sender),item,anchor,extended,ticket);
+    }finally{if(menuRequests.get(e.sender)===request)menuRequests.delete(e.sender);}
   });
   ipcMain.handle('drawer:icons',(e,hide)=>{
     fromDrawer(e);if(typeof hide!=='boolean')throw new Error('设置无效。');

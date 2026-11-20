@@ -149,6 +149,7 @@ export function isValidState(value: unknown): value is AppState {
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
   if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean')) return false;
   if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
+  if (value.settings.drawerMenuMode!==undefined && value.settings.drawerMenuMode!=='windows' && value.settings.drawerMenuMode!=='quick')return false;
   if (value.settings.canvasModules !== undefined && !validModuleList(value.settings.canvasModules) || value.settings.dockFrames !== undefined && !validFrames(value.settings.dockFrames)) return false;
   if ([...moduleFlags, 'hideIconsWithDrawer', 'glassEnabled','layoutSnap'].some(key => isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
   if (modulePositions.some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;

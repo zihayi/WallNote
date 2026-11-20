@@ -21,6 +21,7 @@ export class DrawerMenu {
   private intent?:Intent;
   private serial=0;
   private active?:()=>void;
+  private opening?:{win:BrowserWindow;ticket:string;closed:()=>void;host:Host};
   private stopped=false;
   constructor(private helper:string, private setTracking:(active:boolean)=>Promise<void>, private trackProcess:(pid:number)=>void=()=>{}) {}
 
@@ -54,7 +55,10 @@ export class DrawerMenu {
       const [state,value,...stages]=line.trim().split(' '),r=h.request;
       if(!r || Number(value)!==r.id)return;
       if(state==='profile' && process.env.WALLNOTE_MENU_TRACE==='1' && stages.length===4 && stages.every(s=>/^\d+$/.test(s)))console.info(`[menu timing] parse/bind/query/foreground (ms): ${stages.join('/')}`);
-      if(state==='tracking')clearTimeout(r.timeout); // A visible menu may stay open indefinitely.
+      if(state==='tracking'){
+        clearTimeout(r.timeout); // A visible menu may stay open indefinitely.
+        if(this.opening?.closed===r.closed)this.opening=undefined;
+      }
       else if(state==='closed'){clearTimeout(r.timeout);r.closed();}
       else if(state==='done'){finish();this.armIdle(h);}
       else if(state==='failed')lost();
@@ -72,6 +76,8 @@ export class DrawerMenu {
     h.child.stdin.write(`prepare ${intent.seq} ${win.getNativeWindowHandle().readBigUInt64LE()} ${encode(item.file)}\n`);
   }
   discard(win:BrowserWindow,ticket:string) {
+    const opening=this.opening;
+    if(opening?.win===win && opening.ticket===ticket){opening.closed();this.retire(opening.host);}
     const i=this.intent;if(!i || i.win!==win || i.ticket!==ticket)return;
     this.intent=undefined;
     if(i.host && !i.host.retired)i.host.child.stdin.write(`drop ${i.seq}\n`);
@@ -86,9 +92,10 @@ export class DrawerMenu {
     const prepared=!extended && i && i.host===h && i.win===win && i.ticket===ticket && i.item?.file===item.file && i.item.stamp===item.stamp ? i.seq : 0;
     const closed=()=>{
       if(this.active!==closed)return;
-      this.active=undefined;this.trackProcess(0);void this.setTracking(false);
+      this.active=undefined;this.opening=undefined;this.trackProcess(0);void this.setTracking(false);
     };
     this.active=closed;
+    if(ticket)this.opening={win,ticket,closed,host:h};
     try {
       await this.setTracking(true);
       if(this.active!==closed || win.isDestroyed())return;

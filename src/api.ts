@@ -57,7 +57,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.10.1', platform: 'browser', dataPath: '浏览器本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.10.2', platform: 'browser', dataPath: '浏览器本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));

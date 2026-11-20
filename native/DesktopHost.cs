@@ -10,6 +10,7 @@ using System.Threading;
 internal static class DesktopHost
 {
     private delegate bool EnumProc(IntPtr window, IntPtr parameter);
+    private delegate bool MonitorProc(IntPtr monitor,IntPtr dc,IntPtr rect,IntPtr data);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public Rect Monitor, Work; public uint Flags; }
@@ -19,6 +20,8 @@ internal static class DesktopHost
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr parameter);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder value, int max);
     [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window,uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
@@ -45,6 +48,7 @@ internal static class DesktopHost
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
+    [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr dc,IntPtr clip,MonitorProc callback,IntPtr data);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr window, IntPtr region, bool redraw);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
@@ -54,10 +58,8 @@ internal static class DesktopHost
         return args.Length > index ? double.Parse(args[index], System.Globalization.CultureInfo.InvariantCulture) : GetDpiForWindow(window) / 96.0;
     }
 
-    // Chromium's rounded card has transparent corners. After a WorkerW child becomes
-    // a popup, Windows can composite those pixels as opaque white. Clip the *floating*
-    // HWND as well, in physical pixels, matching the renderer's 20 DIP radius.
-    private static void ClipFloatingWidget(IntPtr window, int width, int height, double scale) {
+    // Floating and directly clickable desktop cards both need a matching HWND silhouette.
+    private static void ClipWidget(IntPtr window, int width, int height, double scale) {
         int diameter = Math.Max(1, Math.Min(Math.Min(width, height), (int)Math.Round(40 * scale)));
         var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
         if (region == IntPtr.Zero) throw new InvalidOperationException("Could not create widget outline.");
@@ -68,6 +70,23 @@ internal static class DesktopHost
     }
 
     private static string ClassName(IntPtr window) { var value = new StringBuilder(256); GetClassName(window, value, value.Capacity); return value.ToString(); }
+    // Only our drawer HWND is placed in the desktop FolderView. File Explorer windows
+    // also have a DefView, so validate both its root and Explorer's PID before attaching.
+    private static bool DesktopIconView(IntPtr view) {
+        if(view==IntPtr.Zero || ClassName(view)!="SHELLDLL_DefView")return false;
+        var root=GetAncestor(view,2);var shell=GetShellWindow();uint s,v,r;
+        return shell!=IntPtr.Zero && (root==shell || ClassName(root)=="WorkerW") && GetWindowThreadProcessId(shell,out s)!=0 &&
+            GetWindowThreadProcessId(root,out r)!=0 && GetWindowThreadProcessId(view,out v)!=0 && s==r && s==v;
+    }
+    private static bool FitsView(IntPtr view,int x,int y,int w,int h) {
+        Rect r;if(!DesktopIconView(view) || !IsWindowVisible(view) || !GetWindowRect(view,out r) || x<r.Left || y<r.Top || x+w>r.Right || y+h>r.Bottom)return false;
+        // A child cannot be dragged beyond its parent. Use the wallpaper host on
+        // shells whose icon view doesn't span every monitor's usable desktop.
+        bool fits=true;bool ok=EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,delegate(IntPtr m,IntPtr dc,IntPtr rect,IntPtr data){
+            var info=new MonitorInfo{Size=Marshal.SizeOf(typeof(MonitorInfo))};
+            fits=GetMonitorInfo(m,ref info) && info.Work.Left>=r.Left && info.Work.Top>=r.Top && info.Work.Right<=r.Right && info.Work.Bottom<=r.Bottom;return fits;
+        },IntPtr.Zero);return ok && fits;
+    }
     private static object Describe(IntPtr window)
     {
         Rect rect; GetWindowRect(window, out rect);
@@ -87,7 +106,7 @@ internal static class DesktopHost
         IntPtr iconHost = IntPtr.Zero, view = IntPtr.Zero, wallpaperHost = IntPtr.Zero;
         EnumWindows(delegate(IntPtr window, IntPtr parameter) {
             var candidate = FindWindowEx(window, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (candidate != IntPtr.Zero) { iconHost = window; view = candidate; }
+            if (DesktopIconView(candidate)) { iconHost = window; view = candidate; return false; }
             return true;
         }, IntPtr.Zero);
         if (iconHost == IntPtr.Zero) throw new InvalidOperationException("The desktop icon host is not available.");
@@ -119,6 +138,13 @@ internal static class DesktopHost
         if (!IsWindow(window) || pid != uint.Parse(owner)) throw new InvalidOperationException("Window does not belong to the requesting application.");
         SetThreadDpiAwarenessContext(GetWindowDpiAwarenessContext(window));
         return window;
+    }
+
+    private static void AttachTo(IntPtr window,IntPtr parent) {
+        if(parent==IntPtr.Zero)throw new InvalidOperationException("Desktop host is unavailable.");
+        SetLastError(0);var previous=SetParent(window,parent);int error=Marshal.GetLastWin32Error();
+        if(previous==IntPtr.Zero && error!=0)throw new Win32Exception(error);
+        if(GetParent(window)!=parent)throw new InvalidOperationException("Desktop attachment did not succeed.");
     }
 
     private static void Place(IntPtr window, IntPtr parent, string[] args, int offset, bool bottom)
@@ -165,11 +191,13 @@ internal static class DesktopHost
         }
         if (args[0] == "attach")
         {
-            if (args.Length != 8) throw new ArgumentException("attach requires handle owner layer x y width height");
+            if (args.Length != 8 && args.Length != 9) throw new ArgumentException("attach requires handle owner layer x y width height [scale]");
             var window = OwnedWindow(args[1], args[2]);
             bool background = args[3] == "wallpaper";
             var hosts = Locate(true);
-            var parent = hosts[3];
+            int x=int.Parse(args[4]),y=int.Parse(args[5]),w=int.Parse(args[6]),h=int.Parse(args[7]);
+            bool direct=args[3]=="drawer" && FitsView(hosts[2],x,y,w,h);
+            var parent = direct?hosts[2]:hosts[3];
             if (parent == IntPtr.Zero) throw new InvalidOperationException("The wallpaper WorkerW layer could not be created.");
             ShowWindow(window, 0);
             var style = GetWindowLongPtr(window, -16).ToInt64();
@@ -177,19 +205,16 @@ internal static class DesktopHost
             SetWindowPos(window, new IntPtr(-2), 0, 0, 0, 0, 0x0010 | 0x0001 | 0x0002);
             SetWindowLongPtr(window, -16, new IntPtr((style & ~0x80000000L) | 0x40000000L));
             SetWindowLongPtr(window, -20, new IntPtr((extended & ~0x00040000L) | 0x00000080L));
-            SetLastError(0);
-            var previous = SetParent(window, parent);
-            int error = Marshal.GetLastWin32Error();
-            if (previous == IntPtr.Zero && error != 0) throw new Win32Exception(error);
-            if (!background)
+            if(direct)try {AttachTo(window,parent);ClipWidget(window,w,h,Scale(window,args,8));}
+            catch(SystemException){direct=false;parent=hosts[3];}
+            if(!direct){AttachTo(window,parent);SetWindowRgn(window,IntPtr.Zero,false);}
+            if (!background && !direct)
             {
                 uint unused;
                 uint widgetThread = GetWindowThreadProcessId(window, out unused);
                 uint desktopThread = GetWindowThreadProcessId(parent, out unused);
                 AttachThreadInput(widgetThread, desktopThread, true);
             }
-            // Embedded cards already use a wallpaper-matched underlay, including corners.
-            SetWindowRgn(window, IntPtr.Zero, false);
             Place(window, parent, args, 4, background);
             if (GetParent(window) != parent) throw new InvalidOperationException("Desktop attachment did not succeed.");
             RedrawWindow(parent, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0080);
@@ -200,15 +225,16 @@ internal static class DesktopHost
             var window = OwnedWindow(args[1], args[2]);
             var parent = GetParent(window);
             Place(window, parent, args, 3, false);
-            if (parent == IntPtr.Zero) ClipFloatingWidget(window, int.Parse(args[5]), int.Parse(args[6]), Scale(window, args, 7));
+            if (parent == IntPtr.Zero || DesktopIconView(parent)) ClipWidget(window, int.Parse(args[5]), int.Parse(args[6]), Scale(window, args, 7));
             return Describe(window);
         }
         if (args[0] == "outline")
         {
             var window = OwnedWindow(args[1], args[2]);
             Rect rect;
-            if (GetParent(window) == IntPtr.Zero && GetWindowRect(window, out rect))
-                ClipFloatingWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
+            var parent=GetParent(window);
+            if ((parent==IntPtr.Zero || DesktopIconView(parent)) && GetWindowRect(window, out rect))
+                ClipWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
             return Describe(window);
         }
         if (args[0] == "topmost")
@@ -219,7 +245,7 @@ internal static class DesktopHost
             SetParent(window, IntPtr.Zero);
             var style = GetWindowLongPtr(window, -16).ToInt64();
             SetWindowLongPtr(window, -16, new IntPtr((style & ~0x40000000L) | 0x80000000L));
-            ClipFloatingWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
+            ClipWidget(window, rect.Right - rect.Left, rect.Bottom - rect.Top, Scale(window, args, 3));
             if (!SetWindowPos(window, new IntPtr(-1), rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, 0x0010 | 0x0020 | 0x0040)) throw new Win32Exception();
             return Describe(window);
         }
@@ -263,6 +289,7 @@ internal static class DesktopHost
             var window = OwnedWindow(args[1], args[2]);
             SetThreadDpiAwarenessContext(new IntPtr(-4)); // Pipe coordinates are physical screen pixels.
             var parent = GetParent(window);
+            bool direct=parent==IntPtr.Zero || DesktopIconView(parent);
             int lastWidth = 0, lastHeight = 0; double lastScale = 0; bool released = false;
             string line;
             while ((line = Console.ReadLine()) != null && IsWindow(window) && GetParent(window) == parent) {
@@ -272,7 +299,7 @@ internal static class DesktopHost
                     int w = int.Parse(fields[2]), h = int.Parse(fields[3]);
                     double scale = double.Parse(fields[4], System.Globalization.CultureInfo.InvariantCulture);
                     if (w < 1 || h < 1 || w > 32000 || h > 32000 || !(scale > 0 && scale <= 12)) throw new ArgumentException("Invalid size.");
-                    if (parent == IntPtr.Zero && (w != lastWidth || h != lastHeight || scale != lastScale)) ClipFloatingWidget(window, w, h, scale);
+                    if (direct && (w != lastWidth || h != lastHeight || scale != lastScale)) ClipWidget(window, w, h, scale);
                     if (parent != IntPtr.Zero) ScreenToClient(parent, ref point);
                     if (!SetWindowPos(window, IntPtr.Zero, point.X, point.Y, w, h, 0x0010 | 0x0004)) throw new Win32Exception();
                     lastWidth = w; lastHeight = h; lastScale = scale;

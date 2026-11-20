@@ -82,7 +82,10 @@ internal static class DesktopInputBridge {
         double radius=20*Math.Max(.5,scale);
         return x>=radius || y>=radius || (x-radius)*(x-radius)+(y-radius)*(y-radius)<=radius*radius;
     }
-    private static bool Embedded(IntPtr h) { var parent=GetParent(h);return parent!=IntPtr.Zero && ClassName(parent)=="WorkerW" && ShellRoot(GetAncestor(parent,2)); }
+    private static bool Embedded(IntPtr h) {
+        var parent=GetParent(h);if(parent==IntPtr.Zero)return false;string cls=ClassName(parent);
+        return (cls=="WorkerW" || (cls=="SHELLDLL_DefView" && IsWindowVisible(parent))) && ShellRoot(GetAncestor(parent,2));
+    }
     private static bool Covers(Target t, Point p) {
         Rect r;return GetWindowRect(t.Window,out r) && Inside(r,p,t.scale) && Owned(t.Window) && IsWindowVisible(t.Window) && Embedded(t.Window);
     }
@@ -135,9 +138,17 @@ internal static class DesktopInputBridge {
         }
         if(type==LeftDown || type==RightDown) {
             // WorkerW children don't always get a blur when the next click goes to Explorer.
-            if(LastPressed!=IntPtr.Zero && (t==null || t.Window!=LastPressed) && Find(LastPressed)!=null)
+            var pressed=t==null?IntPtr.Zero:t.Window;
+            if(t==null){var hit=WindowFromPoint(d.Point);foreach(var target in Targets)if((hit==target.Window || IsChild(target.Window,hit)) && Owned(target.Window)){
+                pressed=target.Window;
+                // The pointer event is already on its way to Chromium. Repair keyboard
+                // focus separately, without ever replaying or delaying that press.
+                if(MenuPid==0 && !InMenu())Output.Add(new {handle=target.handle,type="native-down"});
+                break;
+            }}
+            if(LastPressed!=IntPtr.Zero && pressed!=LastPressed && Find(LastPressed)!=null)
                 Output.Add(new {handle=LastPressed.ToInt64().ToString(),type="outside"});
-            LastPressed=t==null?IntPtr.Zero:t.Window;
+            LastPressed=pressed; // Observe native controls here; do not forward or suppress their click.
         }
         if(Hovered!=IntPtr.Zero && (t==null || Hovered!=t.Window)){Emit(Find(Hovered),"leave",d);Hovered=IntPtr.Zero;}
         if(type==Move) {
@@ -193,7 +204,18 @@ internal static class DesktopInputBridge {
                     if(c.op=="targets"){Updates.Enqueue(c.windows);PostThreadMessage(LoopThread,Wake,UIntPtr.Zero,IntPtr.Zero);continue;}
                     bool ok=false;
                     try {
-                        if(c.op=="focus") { var h=new IntPtr(long.Parse(c.handle));if(Owned(h) && Embedded(h) && !InMenu()){focus(c.handle);ok=true;} }
+                        if(c.op=="focus") {
+                            var h=new IntPtr(long.Parse(c.handle));
+                            if(Owned(h) && Embedded(h) && !InMenu()){
+                                if(ClassName(GetParent(h))=="SHELLDLL_DefView"){
+                                    var info=new GuiInfo{Size=Marshal.SizeOf(typeof(GuiInfo))};
+                                    if(GetGUIThreadInfo(0,ref info)){
+                                        if(info.Focus==h || IsChild(h,info.Focus))ok=true;
+                                        else if(Owned(info.Active) || ShellRoot(GetAncestor(info.Active,2))){focus(c.handle);ok=true;}
+                                    }
+                                }else{focus(c.handle);ok=true;}
+                            }
+                        }
                         if(c.op=="check") ok=Array.TrueForAll(c.windows,delegate(Target t){var h=new IntPtr(long.Parse(t.handle));return Owned(h) && (t.pinned?GetParent(h)==IntPtr.Zero:Embedded(h));});
                     } catch { ok=false; }
                     Output.Add(new { reply=c.id,ok=ok });

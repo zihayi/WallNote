@@ -28,6 +28,7 @@ internal static class DrawerMenuProbe {
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd,uint flag);
+    [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent,IntPtr child);
     [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] static extern void mouse_event(uint flag,uint x,uint y,uint data,UIntPtr extra);
     [DllImport("user32.dll")] static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
@@ -126,7 +127,7 @@ internal static class DrawerMenuProbe {
                                     // fixture geometry and the foreground menu, also immediately before pressing.
                                     if(!Click(p,card,g.menu,pid,delegate(IntPtr hit){
                                         Rect r;if(Pid(card)!=owner||!GetWindowRect(card,out r)||p.x<r.l+20||p.y<r.t+20||p.x>=r.r-20||p.y>=r.b-20)return false;
-                                        if(GetAncestor(hit,2)==card)return true;
+                                        if(hit==card || IsChild(card,hit))return true;
                                         var name=new StringBuilder(80);GetClassName(hit,name,80);
                                         return Pid(hit)==Pid(GetShellWindow()) && (name.ToString()=="SysListView32"||name.ToString()=="SHELLDLL_DefView"||name.ToString()=="WorkerW"||name.ToString()=="Progman");
                                     }))return 5;

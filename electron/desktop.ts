@@ -82,7 +82,7 @@ export class DesktopController {
         entry.bounds=rect; contents.send('desktop:surface',this.surfaceFor(contents));
         if(failed) {
           const px=screen.dipToScreenRect(null,start);
-          void this.native('position',entry.handle,String(process.pid),...[px.x,px.y,px.width,px.height].map(Math.round).map(String)).catch(()=>undefined);
+          void this.native('position',entry.handle,String(process.pid),...[px.x,px.y,px.width,px.height].map(Math.round).map(String),String(screen.getDisplayMatching(start).scaleFactor)).catch(()=>undefined);
           contents.send('layout:save-error');
         }
         if(commit)void this.persist({type:'layout:place',id,frame:toFrame(rect,display,id)}).catch(()=>contents.isDestroyed()||contents.send('layout:save-error'));
@@ -103,7 +103,7 @@ export class DesktopController {
       this.lastFocus = { handle: entry.handle, at: Date.now() };
       const focus = this.input.focus(entry.handle);
       this.pendingFocus.add(focus);
-      try { await focus; } finally { this.pendingFocus.delete(focus); }
+      try { if(!await focus)return; } finally { this.pendingFocus.delete(focus); }
     }
     if (!this.menuTracking && !entry.win.isDestroyed()) entry.win.webContents.focus();
   }
@@ -121,8 +121,10 @@ export class DesktopController {
   }
   private async forwardMouse(packet: MousePacket) {
     const entry = this.byHandle.get(packet.handle);
-    if (this.menuTracking || !entry || !entry.attached || entry.topmost || entry.win.isDestroyed()) return;
+    if (!entry || !entry.attached || entry.topmost || entry.win.isDestroyed()) return;
     if(packet.type==='outside'){entry.win.webContents.send('desktop:outside-press');return;}
+    if(this.menuTracking)return;
+    if(packet.type==='native-down'){await this.focusWidget(entry.win.webContents);return;}
     if (packet.type === 'down' || packet.type === 'wheel') {
       await this.focusWidget(entry.win.webContents);
       if (this.menuTracking || entry.win.isDestroyed()) return;
@@ -166,7 +168,7 @@ export class DesktopController {
       const actual = await this.native<{ bounds: Rectangle }>('topmost', entry.handle, String(process.pid), String(screen.getDisplayMatching(entry.bounds).scaleFactor));
       entry.bounds = screen.screenToDipRect(null, actual.bounds);
     }
-    else await this.native('attach', entry.handle, String(process.pid), 'widget', ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
+    else await this.attach(entry,pixels);
     entry.topmost = topmost;
     // Both native operations already show the same HWND at its final screen-space bounds
     // without activation. A second ShowWindow/position pass flashes at parent-local coords.
@@ -254,7 +256,7 @@ export class DesktopController {
               this.interrupt(entry);
               clearTimeout(this.timers.get(entry.key)); this.timers.delete(entry.key);
               const px = screen.dipToScreenRect(null, home);
-              await this.native('position', entry.handle, String(process.pid), ...[px.x, px.y, px.width, px.height].map(Math.round).map(String));
+              await this.native('position', entry.handle, String(process.pid), ...[px.x, px.y, px.width, px.height].map(Math.round).map(String),String(screen.getDisplayMatching(home).scaleFactor));
               entry.bounds = home; await this.normalizeScale(entry); entry.attached = true;
               entry.win.webContents.send('desktop:surface', this.surfaceFor(entry.win.webContents));
             }
@@ -277,6 +279,11 @@ export class DesktopController {
     const settings=this.getState().settings;
     if(saved&&!settings.dockFrames?.[kind])return fitRect(saved,screen.getDisplayMatching(saved).workArea,kind);
     return moduleHome(settings,kind,layoutDisplays()).rect;
+  }
+
+  private attach(entry:Entry,px:Rectangle) {
+    const layer=entry.kind==='drawer'?'drawer':entry.kind==='wallpaper'?'wallpaper':'widget';
+    return this.native('attach',entry.handle,String(process.pid),layer,...[px.x,px.y,px.width,px.height].map(Math.round).map(String),String(screen.getDisplayMatching(entry.bounds).scaleFactor));
   }
 
   private async create(key: string, kind: Kind, bounds: Rectangle, query: Record<string, string>) {
@@ -317,13 +324,13 @@ export class DesktopController {
     await win.webContents.setVisualZoomLevelLimits(1, 1);
     const pixels = screen.dipToScreenRect(null, bounds);
     if (topmost) await this.native('topmost', handle, String(process.pid), String(screen.getDisplayMatching(bounds).scaleFactor));
-    else await this.native('attach', handle, String(process.pid), wallpaper ? 'wallpaper' : 'widget', ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
+    else await this.attach(entry,pixels);
     entry.attached = true;
     if(!wallpaper)this.updateInputTargets();
     win.showInactive();
     // Showing a transparent Chromium window can reinterpret its initial bounds as parent-local.
     // Reapply screen-space coordinates after ShowWindow, especially on negative-origin displays.
-    if (!wallpaper) await this.native('position', handle, String(process.pid), ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String));
+    if (!wallpaper) await this.native('position', handle, String(process.pid), ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String),String(screen.getDisplayMatching(bounds).scaleFactor));
     if (!wallpaper) await this.normalizeScale(entry);
     win.webContents.send('desktop:surface', this.surfaceFor(win.webContents));
     if (!wallpaper) {
@@ -353,11 +360,11 @@ export class DesktopController {
     const moved = Math.abs(previousPixels.x - result.window.bounds.x) > 1 || Math.abs(previousPixels.y - result.window.bounds.y) > 1;
     if (display.id !== entry.displayId && moved && (Math.abs(position.width - entry.bounds.width) > 1 || Math.abs(position.height - entry.bounds.height) > 1)) {
       const size = { width: Math.round(entry.bounds.width * display.scaleFactor), height: Math.round(entry.bounds.height * display.scaleFactor) };
-      await this.native('position', entry.handle, String(process.pid), String(result.window.bounds.x), String(result.window.bounds.y), String(size.width), String(size.height));
+      await this.native('position', entry.handle, String(process.pid), String(result.window.bounds.x), String(result.window.bounds.y), String(size.width), String(size.height),String(display.scaleFactor));
       if (entry.layerVersion !== version || !entry.attached) return null;
       position = screen.screenToDipRect(null, { ...result.window.bounds, ...size });
     }
-    if (entry.topmost && (display.id !== entry.displayId || position.width !== entry.bounds.width || position.height !== entry.bounds.height)) {
+    if ((entry.topmost || entry.kind==='drawer') && (display.id !== entry.displayId || position.width !== entry.bounds.width || position.height !== entry.bounds.height)) {
       await this.native('outline', entry.handle, String(process.pid), String(display.scaleFactor));
       if (entry.layerVersion !== version || !entry.attached) return null;
     }
