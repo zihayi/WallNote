@@ -10,7 +10,9 @@ configureEnvironment(); await mkdir('test-results', { recursive: true });
 const profile = await mkdtemp(path.resolve('test-results', 'native-notes-'));
 const env = { ...process.env, WALLNOTE_DATA_DIR: profile, WALLNOTE_SHOW_MANAGER: '0', WALLNOTE_CREATE_MANAGER: '1' };
 delete env.VITE_DEV_SERVER_URL;
-const execute = promisify(execFile), helper = path.resolve('dist-native/WallNote.DesktopHost.exe');
+const binary = process.env.WALLNOTE_TEST_INSTALLED_EXE || (process.argv.includes('--packaged') ? path.resolve('release/win-unpacked/WallNote.exe') : '');
+const launchOptions = { ...(binary ? { executablePath: binary, args: [] } : { args: ['.'] }), env, timeout: 60000 };
+const execute = promisify(execFile), helper = binary ? path.join(path.dirname(binary), 'resources/native/WallNote.DesktopHost.exe') : path.resolve('dist-native/WallNote.DesktopHost.exe');
 let app, manager, clipboardSaved = false;
 const notePage = () => app.windows().find(page => new URL(page.url()).searchParams.has('note'));
 const state = () => manager.evaluate(() => window.wallnote.getState());
@@ -21,7 +23,7 @@ async function info(page) {
 }
 async function selected(title) { await expect.poll(() => notePage()?.getByRole('textbox', { name: '便签标题' }).inputValue().catch(() => null)).toBe(title); return notePage(); }
 try {
-  app = await electron.launch({ args: ['.'], env, timeout: 60000 }); await app.firstWindow();
+  app = await electron.launch(launchOptions); await app.firstWindow();
   await expect.poll(() => {
     manager = app.windows().find(page => page.url().startsWith('file:') && !new URL(page.url()).search);
     return manager?.evaluate(() => window.wallnote?.getDesktopStatus());
@@ -83,7 +85,7 @@ try {
   await manager.evaluate(() => window.wallnote.dispatch({ type: 'calendar:select', date: '2028-02-29' }));
   await app.evaluate(async ({ clipboard }) => { const items = globalThis.__noteTestClipboard; if (items.length) await clipboard.write(items); else clipboard.clear(); delete globalThis.__noteTestClipboard; }); clipboardSaved = false;
   await app.close(); app = undefined;
-  app = await electron.launch({ args: ['.'], env, timeout: 60000 }); await app.firstWindow();
+  app = await electron.launch(launchOptions); await app.firstWindow();
   await expect.poll(() => {
     manager = app.windows().find(page => page.url().startsWith('file:') && !new URL(page.url()).search);
     return manager?.evaluate(() => window.wallnote?.getDesktopStatus());
