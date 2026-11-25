@@ -101,6 +101,8 @@ npm run dist      # 生成 Windows x64 安装程序和 SHA-256 校验文件
 
 ## 手机同步
 
+[下载 Android 日历助手（APK）](https://github.com/zihayi/CalendarBridge/releases/latest/download/CalendarBridge.apk)（Android 8.0 及以上） · [版本说明与 SHA-256 校验文件](https://github.com/zihayi/CalendarBridge/releases/latest)
+
 使用 WallNote v0.6.3 和 CalendarBridge Android v4.0 或更新版本：
 
 1. 手机和电脑连接同一 Wi-Fi，打开 WallNote 和手机日历助手。
