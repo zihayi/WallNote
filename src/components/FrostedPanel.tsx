@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Grip, Pin, Settings, X } from 'lucide-react';
 import { currentWallpaper } from '../../shared/wallpapers';
 import type { AppState, DesktopSurface } from '../../shared/types';
@@ -7,8 +7,8 @@ import { beginDesktopManipulation } from './desktop-input';
 import { NativeGuides } from './LayoutGuides';
 import { resizeHandles } from './resize-handles';
 
-export function FrostedPanel({ state, title, widgetKey, icon, children, desktop = false, className = '', onClose, actions }: {
-  state: AppState; title: string; widgetKey: string; icon?: ReactNode; children: ReactNode; desktop?: boolean; className?: string; onClose?: () => void; actions?: ReactNode;
+export function FrostedPanel({ state, title, widgetKey, icon, children, desktop = false, className = '', style, onClose, actions }: {
+  state: AppState; title: string; widgetKey: string; icon?: ReactNode; children: ReactNode; desktop?: boolean; className?: string; style?: CSSProperties; onClose?: () => void; actions?: ReactNode;
 }) {
   const [surface, setSurface] = useState<DesktopSurface | null>(null);
   const [pinIntent, setPinIntent] = useState<boolean | null>(null);
@@ -33,7 +33,7 @@ export function FrostedPanel({ state, title, widgetKey, icon, children, desktop 
   }, [desktop]);
   const current = currentWallpaper(state);
   const sceneStyle = surface ? { left: surface.display.x - surface.bounds.x, top: surface.display.y - surface.bounds.y, width: surface.display.width, height: surface.display.height, backgroundImage: `url("${wallpaperURL(current)}")` } : undefined;
-  const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} aria-label={title} onContextMenu={event => event.preventDefault()}>
+  const panel = <section className={`frost-panel ${desktop ? 'native-panel' : ''} ${topmost ? 'is-topmost' : ''} ${state.settings.glassEnabled === false ? 'solid-panel' : ''} ${className}`} style={style} aria-label={title} onContextMenu={event => { if (!(event.target as Element).closest('input,textarea')) event.preventDefault(); }}>
     {surface && state.settings.glassEnabled !== false && <div className="frost-scene" aria-hidden="true" style={{ ...sceneStyle, backgroundImage: `url("${blurredWallpaperURL(current)}")` }} />}
     <div className="frost-tint" aria-hidden="true" />
     <header className={`frost-header ${desktop ? 'floating-drag' : ''}`} title={desktop ? '拖动标题栏移动并吸附；按住 Alt 开始拖动可自由摆放' : undefined} onPointerDown={event => { if (desktop) beginDesktopManipulation(event, 'move'); }}>

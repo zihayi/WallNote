@@ -3,7 +3,7 @@ import { plannerLayout } from './layout';
 import { defaultSlots, moduleIds, modules, slots, type ModuleId } from './modules';
 
 export type Rect = DesktopSurface['bounds'];
-export interface LayoutDisplay { id: number; workArea: Rect; primary: boolean }
+export interface LayoutDisplay { id: number; workArea: Rect; primary: boolean; label?:string; internal?:boolean }
 /** Fractions of the display's usable area, independent of physical resolution and taskbar size. */
 export interface DockFrame { displayId: number; x: number; y: number; width: number; height: number }
 export type DockFrames = Partial<Record<ModuleId, DockFrame>>;
@@ -34,7 +34,7 @@ export function toFrame(rect: Rect, display: LayoutDisplay, id: ModuleId): DockF
   return { displayId:display.id, x:(r.x-a.x)/a.width,y:(r.y-a.y)/a.height,width:r.width/a.width,height:r.height/a.height };
 }
 export function moduleHome(settings: Settings, id: ModuleId, displays: LayoutDisplay[]): { display: LayoutDisplay; rect: Rect } {
-  const f=settings.dockFrames?.[id], display=displays.find(d=>d.id===f?.displayId) ?? displays.find(d=>d.primary) ?? displays[0], a=display.workArea;
+  const f=settings.dockFrames?.[id], display=displays.find(d=>d.id===(f?.displayId??settings.moduleDisplayId)) ?? displays.find(d=>d.primary) ?? displays[0], a=display.workArea;
   const slot=slots.find(k=>(settings.moduleSlots??defaultSlots)[k]===id);
   const layout=plannerLayout(a);
   const fallback=slot ? layout[defaultSlots[slot]] : {x:a.x+16,y:a.y+16,width:Math.min(400,a.width),height:Math.min(360,a.height)};
@@ -45,10 +45,16 @@ export function moduleHome(settings: Settings, id: ModuleId, displays: LayoutDis
  * float when opening the editor, without modifying a user's old profile on launch. */
 export function displayedHome(settings: Settings, id: ModuleId, displays: LayoutDisplay[]) {
   const saved=settings[`${id}Position`];
-  if (!saved || settings.dockFrames?.[id] || !settings.topmostWidgets?.includes(id)) return moduleHome(settings,id,displays);
+  if (!saved || settings.moduleDisplayId!==undefined || settings.dockFrames?.[id] || !settings.topmostWidgets?.includes(id)) return moduleHome(settings,id,displays);
   const overlap=(a:Rect)=>Math.max(0,Math.min(a.x+a.width,saved.x+saved.width)-Math.max(a.x,saved.x))*Math.max(0,Math.min(a.y+a.height,saved.y+saved.height)-Math.max(a.y,saved.y));
   const best=displays.reduce((p,d)=>overlap(d.workArea)>overlap(p.workArea)?d:p,displays.find(d=>d.primary)??displays[0]);
   return {display:best,rect:fitRect(saved,best.workArea,id)};
+}
+
+/** Floating geometry never replaces the module's desktop home. */
+export function floatingHome(settings: Settings, id: ModuleId, displays: LayoutDisplay[]) {
+  const frame = settings.floatingFrames?.[id];
+  return frame ? moduleHome({ ...settings, dockFrames: { [id]: frame } }, id, displays) : displayedHome(settings, id, displays);
 }
 
 // Work exclusively in global, device-independent pixels. Always use the unsnapped

@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { snapDrag, moduleHome, displayedHome, toFrame, validFrames, shownModules, type LayoutDisplay } from '../shared/snap-layout';
+import { snapDrag, moduleHome, displayedHome, floatingHome, toFrame, validFrames, shownModules, type LayoutDisplay } from '../shared/snap-layout';
 import { createInitialState, isValidState, reduceState } from '../shared/state';
 
 const area={x:0,y:0,width:1440,height:900},p={x:150,y:100,width:340,height:300},peer={x:700,y:240,width:360,height:260};
 describe('magnetic desktop layout',()=>{
+  it('keeps floating moves and resizes separate from the desktop home across pin toggles', () => {
+    const display: LayoutDisplay = { id: 1, primary: true, workArea: area };
+    const docked = reduceState(createInitialState(), { type: 'layout:place', id: 'notes', frame: toFrame(p, display, 'notes') });
+    const pinned = reduceState(docked, { type: 'widget:topmost', key: 'notes', enabled: true });
+    const moved = { x: 600, y: 210, width: 530, height: 460 };
+    const resized = reduceState(pinned, { type: 'layout:place', id: 'notes', frame: toFrame(moved, display, 'notes'), floating: true });
+    expect(resized.settings.dockFrames).toBe(docked.settings.dockFrames);
+    expect(moduleHome(resized.settings, 'notes', [display]).rect).toEqual(p);
+    expect(floatingHome(resized.settings, 'notes', [display]).rect).toEqual(moved);
+    const unpinned = reduceState(resized, { type: 'widget:topmost', key: 'notes', enabled: false });
+    expect(moduleHome(unpinned.settings, 'notes', [display]).rect).toEqual(p);
+    expect(floatingHome(unpinned.settings, 'notes', [display]).rect).toEqual(moved);
+    expect(isValidState(unpinned)).toBe(true);
+    expect(isValidState({ ...unpinned, settings: { ...unpinned.settings, floatingFrames: { notes: { width: -1 } } } })).toBe(false);
+  });
   it('snaps to work area, peer spacing, alignment and center; detaches and bypasses without accumulating drift',()=>{
     expect(snapDrag(p,-146,-96,'move',area,[],'notes')).toEqual({rect:{...p,x:0,y:0},guides:{x:0,y:0}});
     const gap=snapDrag(p,200,144,'move',area,[peer],'notes');

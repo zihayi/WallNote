@@ -1,0 +1,38 @@
+.note-card, .note-editor { background-color: var(--note-background); }
+.note-selection { display: flex; align-items: center; gap: 8px; padding: 8px 0 0; flex-shrink: 0; }
+.note-selection select { flex: 1; min-width: 0; width: 0; border: 1px solid var(--note-line, #ffffff80); border-radius: 6px; background: var(--note-control, #ffffff70); color: var(--note-text, #425e46); padding: 5px 7px; font: inherit; font-size: 11px; text-overflow: ellipsis; }
+.note-selection option { background: #fff; color: #24392b; }
+.note-selection > span { font-size: 10px; color: var(--note-muted, #718266); white-space: nowrap; }
+.floating-note .note-selection + input { padding: 10px 0 8px; }
+.note-color-picker { align-items: center; flex-shrink: 0; }
+.custom-color-control { position: relative; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--note-line, #72846460); border-radius: 5px; color: var(--note-text, #527452); overflow: hidden; cursor: pointer; }
+.custom-color-control.active { box-shadow: 0 0 0 1px currentColor; }
+.custom-color-control > input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; padding: 0; cursor: pointer; }
+.custom-color-control:focus-within { outline: 2px solid #4b8268; outline-offset: 2px; }
+.note-body { display: flex; flex-direction: column; min-height: 0; }
+.floating-note > .note-body { flex: 1; overflow-y: auto; }
+.note-body > textarea { display: block; flex: 1 0 85px; min-height: 85px; border: none; background: transparent; color: var(--note-text, #5b7153); width: 100%; resize: none; font: inherit; font-size: 12px; line-height: 1.9; padding: 10px 0; }
+.note-body > textarea::placeholder { color: var(--note-muted, #78916d); }
+.note-editor > .note-body { max-height: 46vh; overflow-y: auto; }
+.note-editor .note-body > textarea { min-height: 180px; }
+.note-image-insert { display: flex; position: relative; align-items: center; gap: 5px; flex-shrink: 0; margin: 4px 0 7px; padding: 4px 0; color: var(--note-muted, #627a5c); font-size: 10px; cursor: pointer; }
+.note-image-insert.disabled { opacity: .5; cursor: default; }
+.note-image-insert small { margin-left: auto; font-size: 9px; }
+.note-image-insert input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.note-image-insert:focus-within { outline: 2px solid #4b8268; outline-offset: 2px; border-radius: 3px; }
+.note-images { display: grid; gap: 8px; flex-shrink: 0; }
+.note-images figure { margin: 0; border: 1px solid var(--note-line, #738a5630); border-radius: 7px; overflow: hidden; background: var(--note-control, #ffffff60); }
+.note-images img { display: block; width: 100%; max-height: 260px; object-fit: contain; }
+.note-images figcaption { display: flex; align-items: center; padding: 2px 6px; gap: 3px; color: var(--note-text, #4d654a); }
+.note-images figcaption > span { font-size: 10px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-images .icon-button { width: 24px; height: 24px; color: inherit; }
+.note-card-image { width: 100%; height: 72px; object-fit: cover; border-radius: 5px; margin-top: 8px; }
+.note-delete-confirm { position: absolute; inset: auto 10px 45px; z-index: 3; background: #fff; color: #473b34; border: 1px solid #e0d7cd; border-radius: 9px; padding: 12px; box-shadow: 0 5px 20px #0002; }
+.note-delete-confirm p { font-size: 12px; line-height: 1.6; margin-bottom: 10px; overflow-wrap: anywhere; }
+.note-delete-confirm > div { display: flex; justify-content: flex-end; gap: 6px; }
+.solid-panel.floating-note > .frost-tint { background: var(--note-background); }
+.custom-note .frost-title, .custom-note .frost-header .icon-button, .frost-panel.floating-note.custom-note > input, .custom-note .note-body > textarea, .custom-note.note-card h3, .custom-note.note-editor > input { color: var(--note-text); }
+.custom-note.note-card p, .frost-panel.floating-note.custom-note .save-status, .custom-note .editor-bottom { color: var(--note-muted); }
+.custom-note .frost-header, .custom-note > input, .custom-note > footer { border-color: var(--note-line); }
+.custom-note input::placeholder { color: var(--note-muted); }
+.custom-note .color-dot { color: #2b402a; }

@@ -6,6 +6,7 @@ ipcRenderer.on('widget:reveal', () => { document.documentElement.dataset.widgetM
 ipcRenderer.on('desktop:outside-press', () => { window.dispatchEvent(new Event('wallnote:outside-press')); });
 
 const api: WallNoteAPI = {
+  copyNoteImage: dataUrl => ipcRenderer.invoke('note:copy-image', dataUrl),
   getDrawer: () => ipcRenderer.invoke('drawer:get'),
   refreshDrawer: () => ipcRenderer.invoke('drawer:refresh'),
   openDrawerItem: (id,reveal=false) => ipcRenderer.invoke('drawer:open',id,reveal),
@@ -49,6 +50,11 @@ const api: WallNoteAPI = {
     return () => ipcRenderer.removeListener('desktop:surface', listener);
   },
   getLayoutDisplays: () => ipcRenderer.invoke('layout:displays'),
+  switchModuleDisplay: id=>ipcRenderer.invoke('layout:switch-display',id),
+  onLayoutDisplaysChange: callback=>{
+    const listener=(_e:Electron.IpcRendererEvent,displays:Parameters<typeof callback>[0])=>callback(displays);
+    ipcRenderer.on('layout:displays-changed',listener);return()=>ipcRenderer.removeListener('layout:displays-changed',listener);
+  },
   onLayoutGuides: callback => { const listener = (_e: Electron.IpcRendererEvent, guides: Parameters<typeof callback>[0]) => callback(guides); ipcRenderer.on('layout:guides',listener); return () => ipcRenderer.removeListener('layout:guides', listener); },
   onLayoutSaveError: callback => { const listener=()=>callback(); ipcRenderer.on('layout:save-error',listener); return () => ipcRenderer.removeListener('layout:save-error',listener); },
   manipulateDesktopWidget: (mode,anchor,bypass) => ipcRenderer.send('desktop:manipulate', mode,anchor,bypass),

@@ -85,7 +85,7 @@ describe('state integrity', () => {
 describe('durable local store', () => {
   it('persists note edits and positions across restarts', async () => {
     const first = await createStore(); await first.load();
-    const next = reduceState(first.state, { type: 'note:update', id: 'welcome', changes: { content: '恢复后仍然在', pinned: true, position: { x: 50, y: 70, width: 350, height: 400 } } });
+    const next = reduceState(first.state, { type: 'note:update', id: 'welcome', changes: { content: '恢复后仍然在', backgroundColor: '#123456', images: [{ id: 'image', name: '截图.png', dataUrl: 'data:image/png;base64,aGVsbG8=' }], pinned: true, position: { x: 50, y: 70, width: 350, height: 400 } } });
     await first.save(next);
     const second = new StateStore(first.directory); await second.load();
     expect(second.state).toEqual(next);

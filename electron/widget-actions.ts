@@ -7,12 +7,12 @@ export function widgetAllows(kind:Exclude<RendererView,'main'>,key:string,action
   if(kind==='wallpaper')return false;
   const id=kind==='note'||kind==='notes-empty'?'notes':kind;
   if(action.type==='widget:topmost')return action.key===id;
-  if(kind==='note')return action.type==='note:selectDesktop' || (action.type==='note:update' && action.id===key.slice(5));
+  if(kind==='note')return action.type==='note:selectDesktop' || (action.type==='note:add' && action.note.pinned) || ((action.type==='note:update'||action.type==='note:delete') && action.id===key.slice(5));
   if(action.type==='settings:update'){
     const flag=modules[id].flag;
     return Object.keys(action.changes).length===1 && action.changes[flag]===false;
   }
   if(kind==='calendar'||kind==='schedule')return action.type==='calendar:select'||action.type.startsWith('event:');
   if(kind==='tasks')return action.type.startsWith('task:');
-  return kind==='notes-empty' && action.type==='note:add';
+  return kind==='notes-empty' && (action.type==='note:selectDesktop' || action.type==='note:add' && action.note.pinned);
 }

@@ -1,4 +1,5 @@
 import { createInitialState, isValidState, reduceState } from '../shared/state';
+import { dateKey } from '../shared/calendar';
 import type { AppState, WallNoteAPI, Wallpaper } from '../shared/types';
 import { emptyCommunity } from '../shared/community';
 import { emptyDrawer } from '../shared/drawer';
@@ -6,16 +7,18 @@ import { wallpaperURL } from '../shared/wallpapers';
 
 const storageKey = 'wallnote.preview.v1';
 const updates = new EventTarget();
+let previewInitialized = false;
 
 function readState(): AppState {
   const stored = localStorage.getItem(storageKey);
-  if (!stored) {
-    const initial = createInitialState();
+  const parsed: unknown = stored ? JSON.parse(stored) : createInitialState();
+  if (!isValidState(parsed)) throw new Error('浏览器本地数据无法读取。请备份浏览器数据后重试，或启动桌面版。');
+  if (!previewInitialized || !stored) {
+    const initial = { ...parsed, calendarDate: dateKey() };
     localStorage.setItem(storageKey, JSON.stringify(initial));
+    previewInitialized = true;
     return initial;
   }
-  const parsed: unknown = JSON.parse(stored);
-  if (!isValidState(parsed)) throw new Error('浏览器本地数据无法读取。请备份浏览器数据后重试，或启动桌面版。');
   return parsed;
 }
 
@@ -27,6 +30,13 @@ function saveState(state: AppState): AppState {
 }
 
 const previewAPI: WallNoteAPI = {
+  copyNoteImage: async dataUrl => {
+    const image = new Image(); image.src = dataUrl; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    canvas.getContext('2d')!.drawImage(image, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('无法复制图片。')), 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  },
   getDrawer: async()=>emptyDrawer(),refreshDrawer:async()=>emptyDrawer(),drawerIcon:async()=>'',
   openDrawerItem:async()=>{throw new Error('请在 Windows 桌面版中打开项目。');},
   showDrawerMenu:async()=>{throw new Error('请在 Windows 桌面版使用文件菜单。');},
@@ -57,7 +67,7 @@ const previewAPI: WallNoteAPI = {
     window.addEventListener('storage', storage);
     return () => { updates.removeEventListener('change', listener); window.removeEventListener('storage', storage); };
   },
-  getInfo: async () => ({ version: '0.10.2', platform: 'browser', dataPath: '浏览器本地存储', desktop: false, supportsLaunchAtLogin: false }),
+  getInfo: async () => ({ version: '0.11.0', platform: 'browser', dataPath: '浏览器本地存储', desktop: false, supportsLaunchAtLogin: false }),
   openDataFolder: async () => { throw new Error('浏览器预览使用 localStorage；桌面版数据保存在本地应用目录。'); },
   exportBackup: async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(readState(), null, 2)], { type: 'application/json' }));
@@ -85,6 +95,8 @@ const previewAPI: WallNoteAPI = {
   onDesktopSurface: () => () => undefined,
   manipulateDesktopWidget: () => undefined,
   getLayoutDisplays: async () => [{ id: 0, primary: true, workArea: { x:0,y:0,width:window.screen.availWidth||1440,height:window.screen.availHeight||900 } }],
+  switchModuleDisplay: async()=>{throw new Error('请在 Windows 桌面版切换组件屏幕。');},
+  onLayoutDisplaysChange: ()=>()=>undefined,
   onLayoutGuides: () => () => undefined,
   onLayoutSaveError: () => () => undefined,
   finishDesktopManipulation: () => undefined,

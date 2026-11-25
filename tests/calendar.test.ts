@@ -141,6 +141,9 @@ describe('explicit layer pinning and note selection', () => {
     expect(state.settings.topmostWidgets).toEqual(['notes']);
     expect(state.notes.filter(note => note.pinned)).toHaveLength(2);
     expect(isValidState(state)).toBe(true);
-    expect(() => reduceState(state, { type: 'note:selectDesktop', id: 'welcome' })).toThrow();
+    const selected = reduceState(state, { type: 'note:selectDesktop', id: 'welcome' });
+    expect(activeDesktopNote(selected)?.id).toBe('welcome');
+    expect(selected.notes.find(note => note.id === 'welcome')?.pinned).toBe(true);
+    expect(() => reduceState(state, { type: 'note:selectDesktop', id: 'missing' })).toThrow();
   });
 });

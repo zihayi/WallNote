@@ -14,6 +14,7 @@ import { PhoneSyncEntry, useManagerLink } from './components/PhoneSyncEntry';
 import { GitPullRequest } from 'lucide-react';
 import { CommunityPage, ModuleLayout } from './components/Community';
 import { LayoutButton } from './components/LayoutStudio';
+import { DisplaySwitch } from './components/DisplaySwitch';
 import { useAppState } from './use-app-state';
 import { assignedModules } from '../shared/snap-layout';
 import { modules } from '../shared/modules';
@@ -145,7 +146,7 @@ export default function App() {
 
         {page === 'community' && <section id="community" tabIndex={-1}><CommunityPage state={state} /></section>}
         {page === 'dashboard' && <>
-          <div className="page-heading compact-heading"><h1>桌面工作台</h1><div className="workspace-tools"><LayoutButton state={state}/>{isDesktop && <button className="button primary" disabled={!!busy} onClick={()=>void desktopCommand(desktopStatus.active?'showDesktop':'enable')}><Monitor size={15}/>{desktopStatus.active?'查看桌面':'开启桌面模式'}</button>}</div></div>
+          <div className="page-heading compact-heading"><h1>桌面工作台</h1><div className="workspace-tools">{isDesktop&&<DisplaySwitch settings={state.settings} onError={message=>notify(message,true)}/>}<LayoutButton state={state}/>{isDesktop && <button className="button primary" disabled={!!busy} onClick={()=>void desktopCommand(desktopStatus.active?'showDesktop':'enable')}><Monitor size={15}/>{desktopStatus.active?'查看桌面':'开启桌面模式'}</button>}</div></div>
           <PlannerWorkspace state={state} />
         </>}
 

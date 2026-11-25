@@ -5,7 +5,7 @@ import type { ModuleId } from '../shared/modules';
 
 export function layoutDisplays(): LayoutDisplay[] {
   const primary = screen.getPrimaryDisplay().id;
-  return screen.getAllDisplays().map(d => ({ id: d.id, workArea: d.workArea, primary: d.id === primary }));
+  return screen.getAllDisplays().map(d => ({ id: d.id, workArea: d.workArea, primary: d.id === primary, label:d.label, internal:d.internal }));
 }
 
 // One short-lived helper bound to *this* HWND. Never move a WorkerW child with

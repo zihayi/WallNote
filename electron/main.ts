@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, safeStorage, shell, Tray, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, safeStorage, shell, Tray, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,13 +13,15 @@ import { parsePhoneProfile } from './phone-client';
 import { WallpaperCache } from './wallpaper-cache';
 import { stateForView, viewInputs } from '../shared/renderer-state';
 import { dateKey } from '../shared/calendar';
+import { validImageData } from '../shared/note-images';
 import { WifiReceiver } from './wifi-receiver';
 import { ManagerMotion } from './window-motion';
 import { EventEditorWindow } from './event-editor';
 import { CommunityAssistant } from './community';
 import { itemId, itemURL } from '../shared/community';
 import { moduleFlags, modulePositions, modules, validSlots } from '../shared/modules';
-import { assignedModules, dragModes, validFrames, validModuleList } from '../shared/snap-layout';
+import { assignedModules, dragModes, validFrames, validModuleList, type LayoutDisplay } from '../shared/snap-layout';
+import { displayName, groupDisplayId } from '../shared/display-switch';
 import { layoutDisplays } from './snap-gesture';
 import { FileDrawer, type DrawerRoot } from './file-drawer';
 import { DrawerIconLease } from './drawer-icon-lease';
@@ -171,16 +173,43 @@ function showManager() {
 }
 
 let trayKey='';
+let trayDisplays:LayoutDisplay[]=[], trayGroup:number|null=null, trayScreenSettings:AppState['settings']|undefined;
+function refreshDisplays() {
+  trayDisplays=layoutDisplays();trayScreenSettings=undefined;trayKey='';
+  if(mainWindow && !mainWindow.isDestroyed())mainWindow.webContents.send('layout:displays-changed',trayDisplays);
+  updateTray();
+}
+desktop.onDisplaysChanged=refreshDisplays;
+
+async function switchModuleDisplay(displayId:unknown) {
+  if(typeof displayId!=='number'||!Number.isSafeInteger(displayId))throw new Error('屏幕编号无效。');
+  await serial(async()=>{
+    if(quitting)throw new Error('WallNote 正在退出。');
+    const before=store.state;
+    try {await desktop.switchDisplay(displayId,settings=>store.save({...store.state,settings}));}
+    finally {if(store.state!==before)broadcast();}
+    const error=desktop.getStatus().error;
+    if(error && store.state.settings.desktopEnabled!==false)throw new Error(error);
+    if(!layoutDisplays().some(d=>d.id===displayId))throw new Error('屏幕已断开，组件暂时显示在主屏。');
+  });
+}
 function updateTray() {
   if (!tray || tray.isDestroyed()) return;
   const status = desktop.getStatus();
   const settings=store.state.settings,assigned=assignedModules(settings);
-  const key=JSON.stringify([status.enabled,status.active,settings.hideIconsWithDrawer,assigned.map(id=>[id,settings[modules[id].flag]!==false])]);
+  if(settings!==trayScreenSettings){trayScreenSettings=settings;trayGroup=groupDisplayId(settings,trayDisplays);}
+  const key=JSON.stringify([status.enabled,status.active,settings.hideIconsWithDrawer,trayGroup,assigned.map(id=>[id,settings[modules[id].flag]!==false])]);
   if(key===trayKey)return;
   trayKey=key;
   tray.setToolTip(status.active ? 'WallNote · 桌面壁纸正在运行' : 'WallNote · 桌面管理');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开 WallNote 管理面板', click: showManager },
+    ...(trayDisplays.length>1?[{label:'切换组件屏幕',submenu:[
+      ...(trayGroup===null?[{type:'radio' as const,label:'分布在多个屏幕',checked:true,enabled:false}]:[]),
+      ...trayDisplays.map((d,i)=>({type:'radio' as const,label:displayName(d,i).replace(/&/g,'&&'),checked:trayGroup===d.id,click:()=>{
+        void switchModuleDisplay(d.id).catch(e=>{refreshDisplays();dialog.showErrorBox('切换屏幕失败',e instanceof Error?e.message:'请重新选择屏幕。');});
+      }})),
+    ]}]:[]),
     { label: '新建桌面便签', click: () => { void serial(async () => {
       const note = { ...createNote(), pinned: true, title: '新建便签' };
       await store.save(reduceState({ ...store.state, settings: { ...store.state.settings, desktopEnabled: true, showDesktopNotes: true } }, { type: 'note:add', note }));
@@ -211,7 +240,7 @@ async function controlDesktop(command: DesktopCommand) {
   if (command === 'showDesktop') { if (!managerMotion || await managerMotion.hide()) await desktop.native('show-desktop'); return desktop.getStatus(); }
   return serial(async () => {
     if (command === 'resetLayout') {
-      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, ...Object.fromEntries(modulePositions.map(k=>[k,undefined])) } });
+      await store.save({ ...store.state, notes: store.state.notes.map(note => { const copy = { ...note }; delete copy.position; return copy; }), settings: { ...store.state.settings, layoutVersion: 4, dockFrames: undefined, floatingFrames: undefined, ...Object.fromEntries(modulePositions.map(k=>[k,undefined])) } });
     } else await store.save(reduceState(store.state, { type: 'settings:update', changes: { desktopEnabled: command === 'enable' } }));
     await desktop.sync(command === 'resetLayout'); broadcast();
     return desktop.getStatus();
@@ -263,7 +292,7 @@ function validateAction(value: unknown): asserts value is Action {
   if (action.expectedRevision !== undefined && (typeof action.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error('无效的日程版本。');
   if ('id' in action && (typeof action.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(action.id))) throw new Error('无效的项目编号');
   if (value.type === 'note:update' || value.type === 'settings:update' || value.type === 'event:update') {
-    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', ...moduleFlags, 'moduleSlots', 'glassEnabled', 'drawerMenuMode', ...modulePositions];
+    const fields = value.type === 'note:update' ? ['title', 'content', 'color', 'backgroundColor', 'images', 'pinned', 'position'] : value.type === 'event:update' ? ['title', 'date', 'start', 'end', 'description', 'color'] : ['alwaysOnTop', 'launchAtLogin', 'desktopEnabled', ...moduleFlags, 'moduleSlots', 'glassEnabled', 'drawerMenuMode', ...modulePositions];
     if (!action.changes || typeof action.changes !== 'object' || Array.isArray(action.changes) || Object.keys(action.changes).some(k => !fields.includes(k))) throw new Error('无效的修改参数');
   }
   if (value.type === 'task:update' && typeof action.text !== 'string') throw new Error('无效的任务内容');
@@ -272,6 +301,14 @@ function validateAction(value: unknown): asserts value is Action {
 }
 
 function installIPC(): void {
+  ipcMain.handle('note:copy-image', (event, dataUrl: unknown) => {
+    trusted(event);
+    if (event.sender !== mainWindow?.webContents && desktop.identify(event.sender)?.kind !== 'note') throw new Error('请从便签中复制图片。');
+    if (!validImageData(dataUrl)) throw new Error('图片格式无效。');
+    const image = nativeImage.createFromDataURL(dataUrl);
+    if (image.isEmpty()) throw new Error('图片无法读取。');
+    return clipboard.write([new ClipboardItem({ 'image/png': new Blob([Uint8Array.from(image.toPNG())], { type: 'image/png' }) })]);
+  });
   const fromDrawer=(e:IpcMainInvokeEvent)=>{trusted(e);if(e.sender!==mainWindow?.webContents&&desktop.identify(e.sender)?.kind!=='drawer')throw new Error('请在文件抽屉中操作。');};
   ipcMain.handle('drawer:get',e=>{fromDrawer(e);return drawer.status();});
   ipcMain.handle('drawer:refresh',e=>{fromDrawer(e);return drawer.refresh(true);});
@@ -447,6 +484,7 @@ function installIPC(): void {
   ipcMain.handle('desktop:status', event => { trusted(event); return desktop.getStatus(); });
   ipcMain.handle('desktop:surface', event => { trusted(event); return desktop.surfaceFor(event.sender); });
   ipcMain.handle('layout:displays', event => { trusted(event,true); return layoutDisplays(); });
+  ipcMain.handle('layout:switch-display',(event,id)=>{trusted(event,true);return switchModuleDisplay(id);});
   ipcMain.on('desktop:manipulate', (event, mode, anchor, bypass) => {
     const entry = desktop.identify(event.sender);
     if (!entry || entry.kind === 'wallpaper' || event.senderFrame !== event.sender.mainFrame || !dragModes.includes(mode) || !Number.isFinite(anchor?.x) || !Number.isFinite(anchor?.y) || typeof bypass!=='boolean' || quitting) return;
@@ -465,7 +503,7 @@ function installIPC(): void {
     const result = await dialog.showSaveDialog(mainWindow!, { title: '导出数据备份', defaultPath: `WallNote-backup-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON 备份', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;
     await serial(async () => {
-      // Images are deliberately excluded; backup is a portable notes/tasks/settings snapshot.
+      // Wallpaper files are excluded; note images travel with the portable snapshot.
       const snapshot: AppState = { ...store.state, wallpapers: [], favorites: store.state.favorites.filter(id => builtInWallpapers.some(w => w.id === id)), selectedWallpaperId: 'mist', appliedWallpaperId: null };
       await fs.writeFile(result.filePath!, JSON.stringify(snapshot, null, 2), 'utf8');
     });
@@ -476,7 +514,8 @@ function installIPC(): void {
     const result = await dialog.showOpenDialog(mainWindow!, { title: '恢复便签与待办备份', filters: [{ name: 'JSON 备份', extensions: ['json'] }], properties: ['openFile'] });
     if (result.canceled) return null;
     const file = result.filePaths[0];
-    if ((await fs.stat(file)).size > 30 * 1024 * 1024) throw new Error('备份文件过大。');
+    // Backups now include bounded, embedded note images as well as text records.
+    if ((await fs.stat(file)).size > 512 * 1024 * 1024) throw new Error('备份文件超过 512 MB，无法导入。');
     const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
     if (!isValidState(parsed)) throw new Error('这不是有效的 WallNote 备份文件。');
     const confirmation = await dialog.showMessageBox(mainWindow!, { type: 'question', buttons: ['取消', '恢复备份'], defaultId: 0, cancelId: 0, title: '恢复备份', message: '将恢复便签、待办和备份中包含的日程，继续吗？', detail: '恢复前会自动备份现有数据。旧版备份不包含日程时，当前日程会保留。' });
@@ -506,6 +545,7 @@ if (hasLock) {
       await fs.copyFile(store.file, path.join(store.directory, `before-layout-v4-${Date.now()}.json`));
       await store.save(updatedLayout);
     }
+    await store.save(reduceState(store.state, { type: 'calendar:select', date: dateKey() }));
     if (store.state.settings.desktopEnabled !== false && !store.state.appliedWallpaperId) await store.save({ ...store.state, appliedWallpaperId: store.state.selectedWallpaperId });
     protocol.handle('wallnote', async request => {
       const url = new URL(request.url);
@@ -529,7 +569,7 @@ if (hasLock) {
     if (showOnStart || process.env.WALLNOTE_CREATE_MANAGER === '1') createMainWindow(showOnStart);
     tray = new Tray(nativeImage.createFromPath(path.join(assetDir, 'icon.png')).resize({ width: 20, height: 20 }));
     tray.on('double-click', showManager);
-    updateTray();
+    refreshDisplays();
     globalShortcut.register('CommandOrControl+Alt+W', showManager);
     desktop.start();
     await desktop.sync();

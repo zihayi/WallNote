@@ -10,10 +10,14 @@ export interface Note {
   title: string;
   content: string;
   color: NoteColor;
+  backgroundColor?: string | null;
+  images?: NoteImage[];
   pinned: boolean;
   updatedAt: string;
   position?: { x: number; y: number; width: number; height: number };
 }
+
+export interface NoteImage { id: string; name: string; dataUrl: string }
 
 export interface Task {
   id: string;
@@ -88,6 +92,8 @@ export interface AppState {
     alwaysOnTop: boolean; launchAtLogin: boolean; desktopEnabled?: boolean;
     moduleSlots?: ModuleSlots; hideIconsWithDrawer?: boolean; drawerMenuMode?: 'windows'|'quick';
     canvasModules?: ModuleId[]; dockFrames?: DockFrames; layoutSnap?: boolean;
+    floatingFrames?: DockFrames;
+    moduleDisplayId?: number;
     glassEnabled?: boolean;
     topmostWidgets?: string[];
     layoutVersion?: number;
@@ -97,7 +103,7 @@ export interface AppState {
 
 export type Action =
   | { type: 'note:add'; note: Note }
-  | { type: 'note:update'; id: string; changes: Partial<Pick<Note, 'title' | 'content' | 'color' | 'pinned' | 'position'>> }
+  | { type: 'note:update'; id: string; changes: Partial<Pick<Note, 'title' | 'content' | 'color' | 'backgroundColor' | 'images' | 'pinned' | 'position'>> }
   | { type: 'note:delete'; id: string }
   | { type: 'note:selectDesktop'; id: string }
   | { type: 'task:add'; task: Task }
@@ -111,7 +117,7 @@ export type Action =
   | { type: 'event:delete'; id: string }
   | { type: 'calendar:select'; date: string }
   | { type: 'widget:topmost'; key: string; enabled: boolean }
-  | { type: 'layout:place'; id: ModuleId; frame: DockFrame }
+  | { type: 'layout:place'; id: ModuleId; frame: DockFrame; floating?: boolean }
   | { type: 'layout:apply'; ids: ModuleId[]; frames: DockFrames; snap?: boolean }
   | { type: 'wallpaper:favorite'; id: string }
   | { type: 'wallpaper:select'; id: string }
@@ -140,6 +146,7 @@ export interface DesktopSurface {
 export type DesktopCommand = 'enable' | 'disable' | 'showManager' | 'showPhoneSync' | 'showCommunity' | 'showDesktop' | 'resetLayout' | 'quit';
 
 export interface WallNoteAPI {
+  copyNoteImage(dataUrl: string): Promise<void>;
   getDrawer(): Promise<DrawerView>;
   refreshDrawer(): Promise<DrawerView>;
   openDrawerItem(id: string, reveal?: boolean): Promise<void>;
@@ -177,6 +184,8 @@ export interface WallNoteAPI {
   getDesktopSurface(): Promise<DesktopSurface | null>;
   onDesktopSurface(callback: (surface: DesktopSurface) => void): () => void;
   getLayoutDisplays(): Promise<LayoutDisplay[]>;
+  onLayoutDisplaysChange(callback:(displays:LayoutDisplay[])=>void):()=>void;
+  switchModuleDisplay(displayId:number):Promise<void>;
   onLayoutGuides(callback: (guides: Guides) => void): () => void;
   onLayoutSaveError(callback: () => void): () => void;
   manipulateDesktopWidget(mode: DragMode, anchor: {x:number;y:number}, bypass: boolean): void;

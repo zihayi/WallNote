@@ -4,8 +4,9 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import type { Action, AppState, DesktopStatus, DesktopSurface, Note } from '../shared/types';
 import { modules, type ModuleId } from '../shared/modules';
-import { fitRect, minimum, moduleHome, shownModules, toFrame, type DragMode, type Guides } from '../shared/snap-layout';
+import { fitRect, floatingHome, minimum, moduleHome, shownModules, toFrame, type DragMode, type Guides } from '../shared/snap-layout';
 import { layoutDisplays, startSnapGesture } from './snap-gesture';
+import { switchModuleScreen } from '../shared/display-switch';
 import { DesktopInputBridge, type MousePacket } from './input-bridge';
 import { activeDesktopNote } from '../shared/state';
 import { finishWidgetExit } from './window-motion';
@@ -25,6 +26,8 @@ export class DesktopController {
   private pending: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private checking = false;
+  private switchingDisplay=false;
+  onDisplaysChanged?:()=>void;
   private status: DesktopStatus = { enabled: false, active: false, displays: 0, widgets: 0, error: null };
   readonly executable = app.isPackaged ? path.join(process.resourcesPath, 'native', 'WallNote.DesktopHost.exe') : path.join(__dirname, '..', 'dist-native', 'WallNote.DesktopHost.exe');
   private input: DesktopInputBridge;
@@ -61,7 +64,7 @@ export class DesktopController {
   }
   manipulate(contents: WebContents, mode: DragMode, anchor: {x:number;y:number}, bypass: boolean) {
     const entry = this.identify(contents);
-    if (!entry?.attached || entry.kind==='wallpaper' || this.manipulations.size || this.stopped || anchor.x<0 || anchor.y<0 || anchor.x>entry.bounds.width+2 || anchor.y>entry.bounds.height+2) return;
+    if (!entry?.attached || entry.kind==='wallpaper' || this.manipulations.size || this.switchingDisplay || this.stopped || anchor.x<0 || anchor.y<0 || anchor.x>entry.bounds.width+2 || anchor.y>entry.bounds.height+2) return;
     const id=entry.kind==='note'||entry.kind==='notes-empty'?'notes':entry.kind;
     const start={...entry.bounds},version=++entry.layerVersion;
     clearTimeout(this.timers.get(entry.key));this.timers.delete(entry.key);
@@ -85,7 +88,7 @@ export class DesktopController {
           void this.native('position',entry.handle,String(process.pid),...[px.x,px.y,px.width,px.height].map(Math.round).map(String),String(screen.getDisplayMatching(start).scaleFactor)).catch(()=>undefined);
           contents.send('layout:save-error');
         }
-        if(commit)void this.persist({type:'layout:place',id,frame:toFrame(rect,display,id)}).catch(()=>contents.isDestroyed()||contents.send('layout:save-error'));
+        if(commit)void this.persist({type:'layout:place',id,frame:toFrame(rect,display,id),floating:entry.topmost}).catch(()=>contents.isDestroyed()||contents.send('layout:save-error'));
         void this.normalizeScale(entry).then(()=>this.updateInputTargets()).catch(()=>undefined);
       });
     this.manipulations.set(entry.handle,gesture);
@@ -157,16 +160,17 @@ export class DesktopController {
     clearTimeout(this.timers.get(entry.key)); this.timers.delete(entry.key);
     this.interrupt(entry);
     let redock = false;
-    if (!topmost && entry.kind !== 'wallpaper') {
-      const home = this.widgetBounds(undefined, entry.kind === 'note' || entry.kind === 'notes-empty' ? 'notes' : entry.kind);
+    if (entry.kind !== 'wallpaper') {
+      const home = this.widgetBounds(undefined, entry.kind === 'note' || entry.kind === 'notes-empty' ? 'notes' : entry.kind, topmost);
       redock = (['x', 'y', 'width', 'height'] as const).some(k => Math.abs(entry.bounds[k] - home[k]) > 2);
       if (redock) await finishWidgetExit(entry.win);
       entry.bounds = home;
     }
     const pixels = screen.dipToScreenRect(null, entry.bounds);
     if (topmost) {
-      const actual = await this.native<{ bounds: Rectangle }>('topmost', entry.handle, String(process.pid), String(screen.getDisplayMatching(entry.bounds).scaleFactor));
-      entry.bounds = screen.screenToDipRect(null, actual.bounds);
+      const scale = String(screen.getDisplayMatching(entry.bounds).scaleFactor);
+      await this.native('topmost', entry.handle, String(process.pid), scale);
+      await this.native('position', entry.handle, String(process.pid), ...[pixels.x, pixels.y, pixels.width, pixels.height].map(Math.round).map(String), scale);
     }
     else await this.attach(entry,pixels);
     entry.topmost = topmost;
@@ -178,15 +182,32 @@ export class DesktopController {
     entry.attached = true;
   }
 
+  private displaysChanged=()=>{
+    if(this.displayTimer)clearTimeout(this.displayTimer);
+    this.displayTimer=setTimeout(()=>{
+      this.displayTimer=null;if(this.stopped)return;
+      this.onDisplaysChanged?.();
+      if(this.getState().settings.desktopEnabled!==false)void this.sync(true);
+    },800);
+  };
+
   start() {
     this.retry = setInterval(() => { void this.check(); }, 6000);
-    const displaysChanged = () => {
-      if (this.displayTimer) clearTimeout(this.displayTimer);
-      this.displayTimer = setTimeout(() => { void this.sync(true); }, 800);
-    };
-    screen.on('display-added', displaysChanged);
-    screen.on('display-removed', displaysChanged);
-    screen.on('display-metrics-changed', displaysChanged);
+    screen.on('display-added',this.displaysChanged);
+    screen.on('display-removed',this.displaysChanged);
+    screen.on('display-metrics-changed',this.displaysChanged);
+  }
+
+  async switchDisplay(id:number,save:(settings:AppState['settings'])=>Promise<void>) {
+    await this.pending;
+    if(this.stopped)throw new Error('WallNote 正在退出。');
+    if(this.manipulations.size)throw new Error('请先松开正在拖动的组件。');
+    const before=this.getState().settings, next=switchModuleScreen(before,id,layoutDisplays());
+    this.switchingDisplay=true;
+    try {
+      if(next!==before)await save(next);
+      if(next.desktopEnabled!==false)await this.sync(false,true);
+    }finally{this.switchingDisplay=false;}
   }
 
   private async check() {
@@ -238,11 +259,11 @@ export class DesktopController {
           if (!this.entries.has(key)) await this.create(key, 'wallpaper', display.bounds, { wallpaper: '1', display: String(display.id) });
         }
         for (const id of ordinary) if (!this.entries.has(id)) {
-          await this.create(id, id, this.widgetBounds(state.settings.topmostWidgets?.includes(id) ? state.settings[`${id}Position`] : undefined, id), { widget: id });
+          await this.create(id, id, this.widgetBounds(undefined, id, state.settings.topmostWidgets?.includes(id)), { widget: id });
         }
-        if (!notes.length && visible.includes('notes') && !this.entries.has('notes-empty')) await this.create('notes-empty', 'notes-empty', this.widgetBounds(state.settings.topmostWidgets?.includes('notes') ? noteBounds ?? state.settings.notesPosition : undefined, 'notes'), { widget: 'notes-empty' });
+        if (!notes.length && visible.includes('notes') && !this.entries.has('notes-empty')) await this.create('notes-empty', 'notes-empty', this.widgetBounds(noteBounds, 'notes', state.settings.topmostWidgets?.includes('notes')), { widget: 'notes-empty' });
         for (const note of notes) {
-          if (!this.entries.has(`note:${note.id}`)) await this.create(`note:${note.id}`, 'note', this.widgetBounds(state.settings.topmostWidgets?.includes('notes') ? noteBounds ?? state.settings.notesPosition : undefined, 'notes'), { note: note.id });
+          if (!this.entries.has(`note:${note.id}`)) await this.create(`note:${note.id}`, 'note', this.widgetBounds(noteBounds, 'notes', state.settings.topmostWidgets?.includes('notes')), { note: note.id });
         }
         for (const entry of this.entries.values()) {
           if (entry.kind === 'wallpaper') continue;
@@ -250,14 +271,19 @@ export class DesktopController {
           if (entry.topmost !== topmost) await this.setLayer(entry, topmost);
           else if (reflow) {
             const kind = entry.kind === 'note' || entry.kind === 'notes-empty' ? 'notes' : entry.kind;
-            const home = this.widgetBounds(undefined, kind);
+            const home = this.widgetBounds(undefined, kind, entry.topmost);
             if ((['x','y','width','height'] as const).some(k => Math.abs(entry.bounds[k] - home[k]) > 1)) {
               entry.attached = false; entry.layerVersion++;
               this.interrupt(entry);
               clearTimeout(this.timers.get(entry.key)); this.timers.delete(entry.key);
-              const px = screen.dipToScreenRect(null, home);
-              await this.native('position', entry.handle, String(process.pid), ...[px.x, px.y, px.width, px.height].map(Math.round).map(String),String(screen.getDisplayMatching(home).scaleFactor));
-              entry.bounds = home; await this.normalizeScale(entry); entry.attached = true;
+              const px=screen.dipToScreenRect(null,home),scale=screen.getDisplayMatching(home).scaleFactor;
+              const dpiChange=entry.topmost && screen.getDisplayMatching(entry.bounds).scaleFactor!==scale;
+              const place=()=>this.native('position',entry.handle,String(process.pid),...[px.x,px.y,px.width,px.height].map(Math.round).map(String),String(scale));
+              await place();entry.bounds=home;await this.normalizeScale(entry);
+              // A floating Chromium HWND accepts WM_DPICHANGED's suggested rect on
+              // the destination monitor. Apply the requested pixel size after that frame.
+              if(dpiChange)await place();
+              entry.attached = true;
               entry.win.webContents.send('desktop:surface', this.surfaceFor(entry.win.webContents));
             }
           }
@@ -275,9 +301,9 @@ export class DesktopController {
     return result;
   }
 
-  private widgetBounds(saved: Note['position'], kind: ModuleId): Rectangle {
+  private widgetBounds(saved: Note['position'], kind: ModuleId, floating = false): Rectangle {
     const settings=this.getState().settings;
-    if(saved&&!settings.dockFrames?.[kind])return fitRect(saved,screen.getDisplayMatching(saved).workArea,kind);
+    if (floating) return saved ? fitRect(saved, screen.getDisplayMatching(saved).workArea, kind) : floatingHome(settings, kind, layoutDisplays()).rect;
     return moduleHome(settings,kind,layoutDisplays()).rect;
   }
 
@@ -368,15 +394,19 @@ export class DesktopController {
       await this.native('outline', entry.handle, String(process.pid), String(display.scaleFactor));
       if (entry.layerVersion !== version || !entry.attached) return null;
     }
+    const changed = (['x','y','width','height'] as const).some(key => Math.abs(position[key] - entry.bounds[key]) > 1);
     entry.bounds = position;
     await this.normalizeScale(entry);
     if (entry.layerVersion !== version || !entry.attached || entry.win.isDestroyed()) return null;
     this.updateInputTargets();
     entry.win.webContents.send('desktop:surface', this.surfaceFor(entry.win.webContents));
     if (position.width < 240 || position.height < 200 || position.width > 2000 || position.height > 2000) return null;
-    if(entry.kind==='wallpaper')return null;
+    // Reflow/fallback/rebuild already positioned the window from saved frames. Do
+    // not replace a preferred monitor or normalized dimensions with that snapshot.
+    if(entry.kind==='wallpaper' || !changed)return null;
     const id=entry.kind==='note'||entry.kind==='notes-empty'?'notes':entry.kind;
-    return { type:'settings:update', changes:{[`${id}Position`]:position} };
+    if (!entry.topmost) return { type:'settings:update', changes:{[`${id}Position`]:position} };
+    return { type:'layout:place', id, frame:toFrame(position,{id:display.id,workArea:display.workArea,primary:display.id===screen.getPrimaryDisplay().id},id), floating:true };
   }
 
   async positions(): Promise<Action[]> {
@@ -408,6 +438,9 @@ export class DesktopController {
   private async refresh() { if (process.platform === 'win32') await this.native('refresh').catch(() => undefined); }
   async stop() {
     this.stopped = true;
+    screen.removeListener('display-added',this.displaysChanged);
+    screen.removeListener('display-removed',this.displaysChanged);
+    screen.removeListener('display-metrics-changed',this.displaysChanged);
     if (this.retry) clearInterval(this.retry);
     if (this.displayTimer) clearTimeout(this.displayTimer);
     for (const timer of this.timers.values()) clearTimeout(timer);

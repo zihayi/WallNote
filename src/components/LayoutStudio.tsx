@@ -2,30 +2,26 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { Archive, CalendarDays, Check, Clock3, GitPullRequest, Grip, Layers, ListChecks, Magnet, RotateCcw, StickyNote } from 'lucide-react';
 import type { AppState } from '../../shared/types';
 import { modules, type ModuleId } from '../../shared/modules';
+import { displayName, groupDisplayId, frameOnDisplay } from '../../shared/display-switch';
 import { displayedHome, moduleIds, moduleHome, shownModules, snapDrag, toFrame, type DockFrames, type DragMode, type Guides, type LayoutDisplay, type Rect } from '../../shared/snap-layout';
 import { allWallpapers } from '../../shared/state';
 import { api, errorMessage, wallpaperURL } from '../api';
 import { Modal } from './Modal';
 import { resizeHandles } from './resize-handles';
+import { useDisplays } from './DisplaySwitch';
 import './layout-studio.css';
 
 const icons={schedule:Clock3,calendar:CalendarDays,tasks:ListChecks,notes:StickyNote,community:GitPullRequest,drawer:Archive};
-function useDisplays() {
-  const [displays,set]=useState<LayoutDisplay[]>([]),[error,fail]=useState('');
-  useEffect(()=>{let live=true;const refresh=()=>void api.getLayoutDisplays().then(d=>{if(live){set(d);fail('');}}).catch(e=>{if(live)fail(errorMessage(e));});
-    refresh();window.addEventListener('focus',refresh);const off=api.onDesktopStatus(refresh);
-    return()=>{live=false;off();window.removeEventListener('focus',refresh);};},[]);
-  return {displays,error};
-}
 const localStyle=(r:Rect,a:Rect):CSSProperties=>({left:`${(r.x-a.x)/a.width*100}%`,top:`${(r.y-a.y)/a.height*100}%`,width:`${r.width/a.width*100}%`,height:`${r.height/a.height*100}%`});
-function MonitorPicker({displays,selected,pick}:{displays:LayoutDisplay[];selected:LayoutDisplay;pick:(id:number)=>void}) {
-  return <select aria-label="布局显示器" value={selected.id} onChange={e=>pick(Number(e.target.value))}>{displays.map((d,i)=><option key={d.id} value={d.id}>{d.primary?'主屏幕':`屏幕 ${i+1}`} · {d.workArea.width} × {d.workArea.height}</option>)}</select>;
+function MonitorPicker({displays,selected,pick,label='布局显示器'}:{displays:LayoutDisplay[];selected:LayoutDisplay;pick:(id:number)=>void;label?:string}) {
+  return <select aria-label={label} value={selected.id} onChange={e=>pick(Number(e.target.value))}>{displays.map((d,i)=><option key={d.id} value={d.id}>{displayName(d,i)} · {d.workArea.width} × {d.workArea.height}</option>)}</select>;
 }
 interface Gesture { id:ModuleId; mode:DragMode; pointer:number; cx:number; cy:number; start:Rect; area:LayoutDisplay; peers:Rect[]; prior:DockFrames; target:HTMLElement; scaleX:number;scaleY:number; moved:boolean }
 
 function Studio({state,close}:{state:AppState;close:()=>void}) {
   const {displays,error:displayError}=useDisplays(), [monitor,pick]=useState<number>();
-  const d=displays.find(s=>s.id===monitor)??displays.find(s=>s.primary)??displays[0];
+  const preferred=groupDisplayId(state.settings,displays,shownModules(state.settings))??state.settings.moduleDisplayId;
+  const d=displays.find(s=>s.id===monitor)??displays.find(s=>s.id===preferred)??displays.find(s=>s.primary)??displays[0];
   const [ids,setIds]=useState(()=>shownModules(state.settings)),[frames,setFrames]=useState<DockFrames>(()=>({...state.settings.dockFrames}));
   const [selected,select]=useState<ModuleId>(),[guides,lines]=useState<Guides>({}),[snap,enableSnap]=useState(state.settings.layoutSnap!==false),[busy,wait]=useState(false),[error,fail]=useState(''),[preset,setPreset]=useState(false);
   const board=useRef<HTMLDivElement>(null),gesture=useRef<Gesture|null>(null);
@@ -75,7 +71,7 @@ function Studio({state,close}:{state:AppState;close:()=>void}) {
       {!visible.length&&<span className="studio-empty">从模块列表添加卡片</span>}
     </div>}</div>
     <aside className="studio-palette"><strong>桌面模块</strong>{moduleIds.map(id=>{const Icon=icons[id];return <div className="studio-choice" key={id}><input type="checkbox" aria-label={`显示${modules[id].name}`} checked={ids.includes(id)} disabled={busy||!d} onChange={()=>toggle(id)}/><button title={`选中${modules[id].name}`} disabled={!d||!ids.includes(id)} onClick={()=>{pick(home(id).display.id);select(id);}}><Icon size={14}/><span>{modules[id].name}</span></button></div>;})}
-    {d&&ids.some(id=>!visible.includes(id))&&<div className="studio-transfer">移到此屏幕{ids.filter(id=>!visible.includes(id)).map(id=><button key={id} className="text-link" onClick={()=>{setFrames({...frames,[id]:toFrame({...home(id).rect,x:d.workArea.x+24,y:d.workArea.y+24},d,id)});select(id);}}>{modules[id].name} →</button>)}</div>}
+    {d&&ids.some(id=>!visible.includes(id))&&<div className="studio-transfer">移到此屏幕{ids.filter(id=>!visible.includes(id)).map(id=><button key={id} className="text-link" aria-label={`将${modules[id].name}移到此屏幕`} onClick={()=>{setFrames({...frames,[id]:frameOnDisplay(settings,id,displays,d.id,preset)});select(id);}}>{modules[id].name} →</button>)}</div>}
     </aside></div>
     <div className="studio-options"><label><input type="checkbox" checked={snap} onChange={e=>enableSnap(e.target.checked)}/><Magnet size={15}/>自动吸附</label>{chosen&&<span>{chosen.width} × {chosen.height}</span>}<button className="text-link" onClick={()=>{stop(true);setIds(shownModules({...state.settings,canvasModules:undefined}));setFrames({});setPreset(true);select(undefined);}}><RotateCcw size={13}/>恢复预设</button></div>
     {(error||displayError)&&<p className="form-error" role="alert">{error||displayError}</p>}<div className="modal-footer"><button className="button" disabled={busy} onClick={close}>取消</button><button className="button primary" disabled={!d||busy} onClick={()=>void save()}><Check size={15}/>应用布局</button></div>
@@ -89,11 +85,12 @@ export function LayoutButton({state,small=false}:{state:AppState;small?:boolean}
 
 export function SpatialPreview({state,panel,standalone}:{state:AppState;panel:(id:ModuleId)=>ReactNode;standalone:boolean}) {
   const {displays,error}=useDisplays(), [monitor,pick]=useState<number>(), [width,measure]=useState(0);
-  const ref=useRef<HTMLDivElement>(null), d=displays.find(s=>s.id===monitor)??displays.find(s=>s.primary)??displays[0];
+  const group=groupDisplayId(state.settings,displays,shownModules(state.settings));
+  const ref=useRef<HTMLDivElement>(null), d=displays.find(s=>s.id===group)??displays.find(s=>s.id===monitor)??displays.find(s=>s.id===state.settings.moduleDisplayId)??displays.find(s=>s.primary)??displays[0];
   useLayoutEffect(()=>{const el=ref.current;if(!el)return;const ob=new ResizeObserver(()=>measure(el.clientWidth));ob.observe(el);measure(el.clientWidth);return()=>ob.disconnect();},[]);
   if(!d && error)return <p className="form-error">{error}</p>;
   const a=d?.workArea, scale=a&&width?Math.min(width/a.width,standalone?window.innerHeight/a.height:1):0;
-  return <div className="spatial-preview-wrap" ref={ref}>{d&&displays.length>1&&<MonitorPicker displays={displays} selected={d} pick={pick}/>}
+  return <div className="spatial-preview-wrap" ref={ref}>{d&&displays.length>1&&group===null&&<MonitorPicker displays={displays} selected={d} pick={pick} label="预览屏幕"/>}
     {a&&scale>0&&<div className="spatial-viewport" style={{width:a.width*scale,height:a.height*scale}}><div className="spatial-plane" style={{width:a.width,height:a.height,transform:`scale(${scale})`}}>
       {shownModules(state.settings).map(id=>{const home=displayedHome(state.settings,id,displays);return home.display.id===d.id&&<div key={id} data-module={id} className="spatial-frame" style={{left:home.rect.x-a.x,top:home.rect.y-a.y,width:home.rect.width,height:home.rect.height}}>{panel(id)}</div>;})}
     </div></div>}</div>;

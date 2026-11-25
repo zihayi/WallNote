@@ -10,7 +10,7 @@ export function viewInputs(s:AppState, view:RendererView):unknown[] {
   if(view==='main')return [s];
   const inputs:unknown[]=[s.selectedWallpaperId,s.appliedWallpaperId,s.wallpapers];
   if(view!=='wallpaper')inputs.push(s.settings);
-  if(view==='note')inputs.push(s.notes);
+  if(view==='note'||view==='notes-empty')inputs.push(s.notes);
   if(view==='tasks')inputs.push(s.tasks);
   if(view==='calendar'||view==='schedule')inputs.push(s.events,s.phoneEvents,s.phoneSync,selectedDate(s));
   return inputs;
@@ -27,7 +27,7 @@ export function stateForView(state: AppState, view: RendererView, noteId?: strin
   const selectedIds = new Set([...local, ...phone].filter(event => event.date === date).map(event => event.id));
   return {
     ...state,
-    notes: view === 'note' ? state.notes.filter(note => note.pinned).map(note => note.id === noteId ? note : { ...note, content: '' }) : [],
+    notes: view === 'note' || view === 'notes-empty' ? state.notes.map(note => view === 'note' && note.id === noteId ? note : { ...note, content: '', images: undefined }) : [],
     tasks: view === 'tasks' ? state.tasks : [],
     events: local,
     phoneEvents: phone,

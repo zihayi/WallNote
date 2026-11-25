@@ -1,5 +1,6 @@
 import type { Action, AppState, Note, Task } from './types';
 import { eventError, validDate } from './calendar';
+import { MAX_TOTAL_NOTE_IMAGE_DATA, validNoteImages } from './note-images';
 import { validSlots, modules, moduleFlags, modulePositions } from './modules';
 import { isModule, validFrame, validFrames, validModuleList } from './snap-layout';
 
@@ -52,8 +53,9 @@ export function createInitialState(): AppState {
 export function reduceState(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'layout:place': {
-      if (!isModule(action.id) || !validFrame(action.frame)) throw new Error('无效的模块位置。');
-      return {...state,settings:{...state.settings,dockFrames:{...state.settings.dockFrames,[action.id]:action.frame}}};
+      if (!isModule(action.id) || !validFrame(action.frame) || action.floating !== undefined && typeof action.floating !== 'boolean') throw new Error('无效的模块位置。');
+      const field = action.floating ? 'floatingFrames' : 'dockFrames';
+      return {...state,settings:{...state.settings,[field]:{...state.settings[field],[action.id]:action.frame}}};
     }
     case 'layout:apply': {
       if (!validModuleList(action.ids) || !validFrames(action.frames) || action.snap!==undefined && typeof action.snap!=='boolean') throw new Error('无效的桌面布局。');
@@ -65,10 +67,15 @@ export function reduceState(state: AppState, action: Action): AppState {
       return { ...state, notes: [action.note, ...state.notes], settings: action.note.pinned ? { ...state.settings, activeDesktopNote: action.note.id } : state.settings };
     case 'note:update':
       return { ...state, notes: state.notes.map(note => note.id === action.id ? { ...note, ...action.changes, updatedAt: Object.keys(action.changes).every(key => key === 'position') ? note.updatedAt : new Date().toISOString() } : note), settings: action.changes.pinned === true ? { ...state.settings, activeDesktopNote: action.id } : action.changes.pinned === false ? { ...state.settings, topmostWidgets: (state.settings.topmostWidgets ?? []).filter(key => key !== `note:${action.id}`) } : state.settings };
-    case 'note:delete': return { ...state, notes: state.notes.filter(note => note.id !== action.id), settings: { ...state.settings, topmostWidgets: (state.settings.topmostWidgets ?? []).filter(key => key !== `note:${action.id}`) } };
+    case 'note:delete': {
+      const notes = state.notes.filter(note => note.id !== action.id);
+      const wasActive = activeDesktopNote(state)?.id === action.id;
+      const next = wasActive ? notes.find(note => note.pinned) ?? notes[Math.min(state.notes.findIndex(note => note.id === action.id), notes.length - 1)] : undefined;
+      return { ...state, notes: next ? notes.map(note => note.id === next.id ? { ...note, pinned: true } : note) : notes, settings: { ...state.settings, ...(wasActive || state.settings.activeDesktopNote === action.id ? { activeDesktopNote: next?.id } : {}), topmostWidgets: (state.settings.topmostWidgets ?? []).filter(key => key !== `note:${action.id}`) } };
+    }
     case 'note:selectDesktop': {
-      if (!state.notes.some(note => note.id === action.id && note.pinned)) throw new Error('该便签未加入桌面。');
-      return { ...state, settings: { ...state.settings, activeDesktopNote: action.id } };
+      if (!state.notes.some(note => note.id === action.id)) throw new Error('该便签已被删除。');
+      return { ...state, notes: state.notes.map(note => note.id === action.id && !note.pinned ? { ...note, pinned: true } : note), settings: { ...state.settings, activeDesktopNote: action.id, showDesktopNotes: true } };
     }
     case 'task:add':
       if (!action.task.text.trim() || state.tasks.some(t => t.id === action.task.id)) return state;
@@ -149,8 +156,10 @@ export function isValidState(value: unknown): value is AppState {
   if (value.notes.length > 500 || value.tasks.length > 5000 || value.wallpapers.length > 500) return false;
   if (!isRecord(value.settings) || (value.settings.desktopEnabled !== undefined && typeof value.settings.desktopEnabled !== 'boolean')) return false;
   if (value.settings.moduleSlots !== undefined && !validSlots(value.settings.moduleSlots)) return false;
+  if (value.settings.moduleDisplayId!==undefined && !Number.isSafeInteger(value.settings.moduleDisplayId))return false;
   if (value.settings.drawerMenuMode!==undefined && value.settings.drawerMenuMode!=='windows' && value.settings.drawerMenuMode!=='quick')return false;
   if (value.settings.canvasModules !== undefined && !validModuleList(value.settings.canvasModules) || value.settings.dockFrames !== undefined && !validFrames(value.settings.dockFrames)) return false;
+  if (value.settings.floatingFrames !== undefined && !validFrames(value.settings.floatingFrames)) return false;
   if ([...moduleFlags, 'hideIconsWithDrawer', 'glassEnabled','layoutSnap'].some(key => isRecord(value.settings) && value.settings[key] !== undefined && typeof value.settings[key] !== 'boolean')) return false;
   if (modulePositions.some(key => !validPosition((value.settings as Record<string, unknown>)[key]))) return false;
   if (value.calendarDate !== undefined && !validDate(value.calendarDate)) return false;
@@ -160,6 +169,10 @@ export function isValidState(value: unknown): value is AppState {
   if (value.events !== undefined && (!Array.isArray(value.events) || value.events.length > 10000 || !value.events.every(event => validSchedule(event, false)) || new Set(value.events.map(event => event.id)).size !== value.events.length)) return false;
   if (value.phoneEvents !== undefined && (!Array.isArray(value.phoneEvents) || value.phoneEvents.length > 10000 || !value.phoneEvents.every(event => validSchedule(event, true)) || new Set(value.phoneEvents.map(event => event.id)).size !== value.phoneEvents.length)) return false;
   if (value.phoneSync !== undefined && !validPhoneSync(value.phoneSync)) return false;
+  if (value.notes.some(note => !isRecord(note) || note.backgroundColor != null && (typeof note.backgroundColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(note.backgroundColor)))) return false;
+  if (value.notes.some(note => !isRecord(note) || !validNoteImages(note.images))) return false;
+  let imageBytes = 0;
+  for (const note of value.notes as Note[]) for (const image of note.images ?? []) { imageBytes += image.dataUrl.length; if (imageBytes > MAX_TOTAL_NOTE_IMAGE_DATA) return false; }
   const notesValid = value.notes.every(n => isRecord(n) && isId(n.id) && isText(n.title, 120) && isText(n.content, 50000) && noteColors.includes(n.color as Note['color']) && typeof n.pinned === 'boolean' && isText(n.updatedAt, 50) && Number.isFinite(Date.parse(n.updatedAt)) && (n.position === undefined || (isRecord(n.position) && ['x', 'y', 'width', 'height'].every(k => typeof n.position === 'object' && Number.isFinite((n.position as Record<string, unknown>)[k])) && Number(n.position.width) >= 240 && Number(n.position.width) <= 2000 && Number(n.position.height) >= 200 && Number(n.position.height) <= 2000)));
   const tasksValid = value.tasks.every(t => isRecord(t) && isId(t.id) && isText(t.text, 500) && t.text.trim().length > 0 && typeof t.completed === 'boolean' && typeof t.priority === 'boolean' && isText(t.createdAt, 50) && Number.isFinite(Date.parse(t.createdAt)));
   const wallpapersValid = value.wallpapers.every(w => isRecord(w) && isId(w.id) && isText(w.name, 120) && isText(w.description, 500) && w.category === 'imported' && typeof w.file === 'string' && /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|bmp)$/i.test(w.file) && Array.isArray(w.colors) && w.colors.every(c => typeof c === 'string' && /^#[\da-fA-F]{6}$/.test(c)));

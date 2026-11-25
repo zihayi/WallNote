@@ -19,6 +19,10 @@ describe('renderer memory payloads', () => {
     expect(widgetAllows('drawer','drawer',{type:'settings:update',changes:{showDesktopDrawer:false}})).toBe(true);
     expect(widgetAllows('drawer','drawer',{type:'settings:update',changes:{showDesktopDrawer:false,launchAtLogin:true}})).toBe(false);
     expect(widgetAllows('note','note:a',{type:'note:update',id:'b',changes:{content:''}})).toBe(false);
+    expect(widgetAllows('note','note:a',{type:'note:delete',id:'b'})).toBe(false);
+    expect(widgetAllows('note','note:a',{type:'note:delete',id:'a'})).toBe(true);
+    expect(widgetAllows('note','note:a',{type:'note:add',note:{...createInitialState().notes[0],pinned:true}})).toBe(true);
+    expect(widgetAllows('notes-empty','notes-empty',{type:'note:selectDesktop',id:'welcome'})).toBe(true);
     expect(widgetAllows('note','note:a',{type:'widget:topmost',key:'notes',enabled:true})).toBe(true);
   });
   it('omits unrelated content from wallpaper and task windows', () => {
@@ -55,10 +59,17 @@ describe('renderer memory payloads', () => {
   it('keeps note switching metadata but not inactive note bodies', () => {
     const state = createInitialState();
     state.notes[0].pinned = true; state.notes[1].pinned = true;
+    state.notes[1].images = [{ id: 'preview', name: '附件', dataUrl: 'data:image/png;base64,aGVsbG8=' }];
     const view = stateForView(state, 'note', state.notes[0].id);
-    expect(view.notes).toHaveLength(2);
+    expect(view.notes).toHaveLength(state.notes.length);
     expect(view.notes[0].content).toBe(state.notes[0].content);
     expect(view.notes[1]).toMatchObject({ id: state.notes[1].id, title: state.notes[1].title, content: '' });
+    expect(view.notes[1].images).toBeUndefined();
+    expect(view.notes[2]).toMatchObject({ id: state.notes[2].id, pinned: false, content: '' });
+    const empty = stateForView(state, 'notes-empty');
+    expect(empty.notes.map(note => note.id)).toEqual(state.notes.map(note => note.id));
+    expect(empty.notes.every(note => !note.content && !note.images)).toBe(true);
+    expect(viewInputs(state, 'notes-empty')).not.toEqual(viewInputs({ ...state, notes: [] }, 'notes-empty'));
     expect(stateForView(state, 'main')).toBe(state);
   });
 });

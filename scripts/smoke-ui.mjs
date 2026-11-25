@@ -61,8 +61,16 @@ try {
   await expect(calendar.locator('.schedule-event')).toHaveCount(0);
   await page.reload();
   await nav('日历与日程').click();
-  await calendar.getByRole('button', { name: '上个月', exact: true }).click();
-  await calendar.getByRole('button', { name: '选择日期 2028-02-29', exact: true }).click();
+  const today = await page.evaluate(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  });
+  await expect(calendar.getByRole('button', { name: `选择日期 ${today}`, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(schedule.locator('.hourly-list')).toHaveAttribute('aria-label', `${today} 按小时日程`);
+  await page.keyboard.press('Control+k');
+  await page.getByRole('textbox', { name: '搜索关键词' }).fill('项目讨论');
+  await page.getByRole('dialog').getByRole('button', { name: /项目讨论/ }).click();
+  await expect(calendar.getByRole('button', { name: '选择日期 2028-02-29', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(calendar.getByRole('button', { name: '编辑日程：项目讨论', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/calendar.png', fullPage: true });
 
@@ -139,7 +147,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   expect(errors).toEqual([]);
-  console.log('UI smoke passed: calendar dates/leap day, hourly schedule, event CRUD/validation/reload/search, notes, tasks, wallpapers, glass toggle, backup, responsive layout.');
+  console.log('UI smoke passed: calendar dates/leap day, startup selects today, hourly schedule, event CRUD/validation/reload/search, notes, tasks, wallpapers, glass toggle, backup, responsive layout.');
 } finally {
   await browser?.close();
   await new Promise(resolve => server.httpServer.close(resolve));
